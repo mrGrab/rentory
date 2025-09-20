@@ -1,6 +1,6 @@
 from uuid import UUID, uuid4
 from enum import Enum
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional, List
 from pydantic import EmailStr, BaseModel
 from sqlmodel import Field, SQLModel, Relationship, Column, JSON
@@ -40,28 +40,35 @@ class OrderItemLink(SQLModel, table=True):
 class UserBase(SQLModel):
     username: str = Field(unique=True, index=True, max_length=255)
     email: EmailStr = Field(unique=True, index=True, max_length=255)
+    avatar: Optional[str] = Field(default=None, max_length=512)
 
 
 class UserCreate(UserBase):
-    password: str = Field(min_length=8, max_length=40)
+    password: Optional[str] = Field(default=None, min_length=8, max_length=40)
+    is_external: bool = Field(default=False)
 
 
 class UserRegister(SQLModel):
     username: str = Field(max_length=255)
     email: EmailStr = Field(max_length=255)
+    avatar: Optional[str] = Field(default=None, max_length=512)
     password: str = Field(min_length=8, max_length=40)
+    is_external: bool = Field(default=False)
 
 
 class UserUpdate(UserBase):
     username: Optional[str] = Field(default=None, max_length=255)
     email: Optional[EmailStr] = Field(default=None, max_length=255)
+    avatar: Optional[str] = Field(default=None, max_length=512)
     password: Optional[str] = Field(default=None, min_length=8, max_length=40)
     is_superuser: Optional[bool] = None
     is_active: Optional[bool] = None
+    is_external: Optional[bool] = None
 
 
 class UserUpdateMe(SQLModel):
     email: EmailStr | None = Field(default=None, max_length=255)
+    avatar: Optional[str] = Field(default=None, max_length=512)
 
 
 class UpdatePassword(SQLModel):
@@ -73,17 +80,26 @@ class User(UserBase, UUIDMixin, TimestampMixin, table=True):
     hashed_password: str
     is_superuser: bool = Field(default=False)
     is_active: bool = Field(default=False)
+    is_external: bool = Field(default=False)
 
 
 class UserPublic(UserBase):
     id: UUID
     is_active: bool
     is_superuser: bool
+    is_external: bool
 
 
 class UsersPublic(SQLModel):
     data: list[UserPublic]
     total: int
+
+
+class UserFilters(SQLModel):
+    id: Optional[List[UUID] | UUID] = None
+    is_active: Optional[bool] = None
+    is_superuser: Optional[bool] = None
+    is_external: Optional[bool] = None
 
 
 # --------------------
@@ -132,7 +148,8 @@ class ItemVariant(UUIDMixin, TimestampMixin, SQLModel, table=True):
 
 class ItemPrice(UUIDMixin, SQLModel, table=True):
     variant_id: UUID = Field(foreign_key="itemvariant.id")
-    amount: int = Field(ge=0)
+    amount: int = Field(default=0, ge=0)
+    deposit: int = Field(default=0, ge=0)
     price_type: Optional[str] = Field(default=None, max_length=100)
     variant: "ItemVariant" = Relationship(back_populates="prices")
 
@@ -240,7 +257,7 @@ class ItemFilters(SQLModel):
 class ClientBase(SQLModel):
     given_name: Optional[str] = Field(default=None, index=True, max_length=255)
     surname: Optional[str] = Field(default=None, max_length=255)
-    phone: str = Field(index=True, max_length=20)
+    phone: str = Field(index=True, unique=True, max_length=20)
     instagram: Optional[str] = Field(default=None, max_length=255)
     email: Optional[EmailStr] = Field(default=None, index=True, max_length=255)
     notes: Optional[str] = Field(default=None, max_length=512)

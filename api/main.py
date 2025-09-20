@@ -1,6 +1,15 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from api.v1.routes import version, users, items, orders, login, clients, upload, item_variants
+from api.v1.routes import (
+    version,
+    users,
+    items,
+    orders,
+    login,
+    clients,
+    upload,
+    item_variants,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["API v1"])
 router.include_router(login.router)

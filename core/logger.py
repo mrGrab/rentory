@@ -49,7 +49,7 @@ LOGGING_CONFIG = {
     },
     "loggers": {
         "uvicorn": {
-            "handlers": ["default", "journal"],
+            "handlers": ["default"],
             "level": "INFO",
             "propagate": False
         },

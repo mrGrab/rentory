@@ -1,12 +1,12 @@
-import json
 from uuid import UUID
+from typing import List
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Depends, Query, Response
-from sqlmodel import select, func
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from sqlmodel import select
 from core.logger import logger
-from core.dependency import (
-    SessionDep,
-    get_current_user,
+from core.dependencies import SessionDep, CurrentUser
+from core.database import (
+    parse_query_params,
     calculate_pagination,
     apply_sorting,
     get_total_count,
@@ -22,50 +22,52 @@ from core.models import (
 router = APIRouter(prefix="/variants", tags=["Items"])
 
 
-def _apply_filters(stmt, f: ItemVariantFilters):
-    """Apply all filters to the query statement."""
-
-    if f.id:
-        stmt = stmt.where(ItemVariant.id.in_(f.id))
-    if f.item_id:
-        stmt = stmt.where(ItemVariant.item_id.in_(f.item_id))
-    if f.color:
-        stmt = stmt.where(ItemVariant.color == f.color)
-    if f.size:
-        stmt = stmt.where(ItemVariant.size == f.size)
-    if f.status:
-        stmt = stmt.where(ItemVariant.status.in_(f.status))
-    if f.service_end_time:
-        stmt = stmt.where(ItemVariant.service_end_time == f.service_end_time)
-    if f.service_start_time:
+def _apply_filters(stmt, filters: ItemVariantFilters):
+    """Apply filters to query statement"""
+    if filters.id:
+        stmt = stmt.where(ItemVariant.id.in_(filters.id))
+    if filters.item_id:
+        stmt = stmt.where(ItemVariant.item_id.in_(filters.item_id))
+    if filters.color:
+        stmt = stmt.where(ItemVariant.color == filters.color)
+    if filters.size:
+        stmt = stmt.where(ItemVariant.size == filters.size)
+    if filters.status:
+        stmt = stmt.where(ItemVariant.status.in_(filters.status))
+    if filters.service_end_time:
         stmt = stmt.where(
-            ItemVariant.service_start_time == f.service_start_time)
+            ItemVariant.service_end_time == filters.service_end_time)
+    if filters.service_start_time:
+        stmt = stmt.where(
+            ItemVariant.service_start_time == filters.service_start_time)
 
     return stmt.distinct()
 
 
 @router.get("",
+            response_model=List[ItemVariantPublic],
             summary="List of item variants",
-            description="Retrieve a list of all item variants.",
-            dependencies=[Depends(get_current_user)])
-async def read_variants(response: Response,
-                        session: SessionDep,
-                        filter_: str = Query("{}", alias="filter"),
-                        range_: str = Query("[0, 500]", alias="range"),
-                        sort: str = Query('["id","ASC"]', alias="sort")):
+            description="Retrieve a list of all item variants.")
+async def read_variants(
+    response: Response,
+    session: SessionDep,
+    current_user: CurrentUser,
+    filter_: str = Query("{}", alias="filter"),
+    range_: str = Query("[0, 500]", alias="range"),
+    sort: str = Query('["id","ASC"]', alias="sort")
+) -> List[ItemVariantPublic]:
     try:
         # Parse inputs
-        sort_field, sort_order = json.loads(sort)
-        offset, limit = calculate_pagination(json.loads(range_))
-        filter_dict = json.loads(filter_)
+        filter_dict, range_list, sort_field, sort_order = parse_query_params(
+            filter_, range_, sort)
+
+        # Build filters and pagination
         filters = ItemVariantFilters(**filter_dict)
+        offset, limit = calculate_pagination(range_list)
 
+        # Build base query
         stmt = select(ItemVariant)
-
-        # Apply filters
         stmt = _apply_filters(stmt, filters)
-
-        # Apply sorting
         stmt = apply_sorting(stmt, ItemVariant, sort_field, sort_order)
 
         # Get total count before pagination
@@ -78,55 +80,58 @@ async def read_variants(response: Response,
         result = [ItemVariantPublic.model_validate(v) for v in variants]
 
         set_pagination_headers(response, offset, len(result), total)
-        logger.info(f"Fetched {len(variants)} variants out of {total} total")
+        logger.info(
+            f"Fetched {len(variants)} variants out of {total} total for user {current_user.username}"
+        )
         return result
 
     except Exception as e:
         logger.error(f"Error fetching variants: {e}")
-        raise HTTPException(status_code=500,
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail="Failed to retrieve variants")
 
 
-@router.get("/{id}",
+@router.get("/{variant_id}",
             response_model=ItemVariantPublic,
             summary="Get item variant by ID",
-            description="Fetch a single itemvariant  by its unique ID.",
-            dependencies=[Depends(get_current_user)])
-def read_variant(session: SessionDep, id: UUID) -> ItemVariantPublic:
-    logger.debug(f"Fetching item variant with ID: {id}")
+            description="Fetch a single itemvariant  by its unique ID.")
+def read_variant(session: SessionDep, current_user: CurrentUser,
+                 variant_id: UUID) -> ItemVariantPublic:
+    logger.debug(
+        f"User {current_user.username} fetching item variant: {variant_id}")
 
-    stmt = select(ItemVariant).where(ItemVariant.id == id)
-
-    variant = session.exec(stmt).first()
+    variant = session.get(ItemVariant, variant_id)
     if not variant:
-        logger.warning(f"Item variant not found: {id}")
-        raise HTTPException(status_code=404, detail="Item variant not found")
+        logger.warning(f"Item variant not found: {variant_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Item variant not found")
 
     logger.info(f"Item variant retrieved: {variant.id}")
-    return variant
+    return ItemVariantPublic.model_validate(variant)
 
 
-@router.put("/{id}",
+@router.put("/{variant_id}",
             response_model=ItemVariantPublic,
-            summary="Update item variant by ID",
-            description="Update an existing variant details by its unique ID.",
-            dependencies=[Depends(get_current_user)])
-def update_variant(session: SessionDep, id: UUID,
-                   variant_in: ItemVariantUpdate):
-    logger.info(f"Updating variant ID {id}")
+            summary="Update item variant",
+            description="Update an existing variant by ID.")
+def update_variant(session: SessionDep, current_user: CurrentUser,
+                   variant_id: UUID,
+                   variant_in: ItemVariantUpdate) -> ItemVariantPublic:
+    logger.info(f"User {current_user.username} updating variant {variant_id}")
 
-    stmt = select(ItemVariant).where(ItemVariant.id == id)
-    variant = session.exec(stmt).one_or_none()
+    variant = session.get(ItemVariant, variant_id)
     if not variant:
-        logger.warning(f"Item variant with ID {id} not found")
-        raise HTTPException(status_code=404, detail="Item variant not found")
+        logger.warning(f"Variant with ID {variant_id} not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Item variant not found")
+    # Validate update data
+    update_data = variant_in.model_dump(exclude_unset=True)
+    if not update_data:
+        logger.info(f"No changes provided for variant with ID: {id}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No data provided for update")
     try:
-        update_data = variant_in.model_dump(exclude_unset=True)
-        if not update_data:
-            logger.info(f"No changes provided for variant with ID: {id}")
-            raise HTTPException(status_code=400,
-                                detail="No data provided for update")
-
+        # Apply updates
         for field, value in update_data.items():
             setattr(variant, field, value)
 
@@ -139,10 +144,11 @@ def update_variant(session: SessionDep, id: UUID,
         session.commit()
         session.refresh(variant)
 
-        logger.info(f"Item variant updated successfully: {variant.id}")
+        logger.info(f"Updated variant: {variant_id}")
         return ItemVariantPublic.model_validate(variant)
 
     except Exception as e:
-        logger.exception(f"Failed to update item variant ID {id}: {e}")
-        raise HTTPException(status_code=500,
+        session.rollback()
+        logger.error(f"Error updating variant {variant_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail="Failed to update item variant")

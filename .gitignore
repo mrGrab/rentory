@@ -4,3 +4,4 @@ __pycache__/
 .vscode
 database.db
 static/images
+service_account_key.json

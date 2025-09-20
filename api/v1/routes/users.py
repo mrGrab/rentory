@@ -1,113 +1,151 @@
 # coding: UTF-8
 
 import uuid
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import select, func
+from sqlmodel import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+
 from core.logger import logger
-from core.dependency import (
-    SessionDep,
-    CurrentUser,
-    get_user_by_email,
-    hash_password,
-    get_user_by_username,
-    get_current_superuser,
-)
-from core.models import (
-    UserCreate,
-    UserPublic,
-    User,
-    UsersPublic,
-)
+from core.dependencies import SessionDep, CurrentUser, get_current_superuser
+from core.database import (parse_query_params, calculate_pagination,
+                           apply_sorting, get_total_count,
+                           set_pagination_headers, create_user,
+                           get_user_by_username, get_user_by_email)
+from core.models import UserCreate, UserPublic, User, UserFilters
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
+def _check_user_exists(session: SessionDep, username: str, email: str) -> bool:
+    """Check if user already exists by username or email"""
+    if get_user_by_username(session, username):
+        return True
+    if get_user_by_email(session, email):
+        return True
+    return False
+
+
+def _apply_filters(stmt, filters: UserFilters):
+    """Apply user filters to the query statement"""
+    if filters.id:
+        if isinstance(filters.id, list):
+            stmt = stmt.where(User.id.in_(filters.id))
+        else:
+            stmt = stmt.where(User.id.contains(filters.id))
+
+    if filters.is_external:
+        stmt = stmt.where(User.is_external == True)
+
+    if filters.is_active:
+        stmt = stmt.where(User.is_active == True)
+
+    if filters.is_superuser:
+        stmt = stmt.where(User.is_superuser == True)
+
+    return stmt
+
+
 @router.get("",
-            response_model=UsersPublic,
+            response_model=list[UserPublic],
             summary="List all users",
             description="Retrieve a paginated list of all users",
             dependencies=[Depends(get_current_superuser)])
-def read_users(session: SessionDep,
-               offset: int = Query(0, ge=0),
-               limit: int = Query(10, ge=1, le=100)):
-    logger.debug(f"Fetching users with offset={offset}, limit={limit}")
+def read_users(response: Response,
+               session: SessionDep,
+               filter_: str = Query("{}", alias="filter"),
+               range_: str = Query("[0, 500]", alias="range"),
+               sort: str = Query('["id","DESC"]', alias="sort")):
+    """List users with filtering, sorting, and pagination"""
+
     try:
-        count_stmt = select(func.count()).select_from(User)
-        total = session.exec(count_stmt).one()
+        # Parse query parameters
+        filter_dict, range_list, sort_field, sort_order = parse_query_params(
+            filter_, range_, sort)
 
-        stmt = select(User).offset(offset).limit(limit)
-        raw_users = session.exec(stmt).all()
+        # Build filters
+        filters = UserFilters(**filter_dict)
+        offset, limit = calculate_pagination(range_list)
 
-        users = [UserPublic.model_validate(i) for i in raw_users]
-        logger.info(f"Fetched {len(users)} users out of {total} total")
-        return UsersPublic(data=users, total=total)
+        # Build query
+        stmt = select(User)
+        stmt = _apply_filters(stmt, filters)
+        stmt = apply_sorting(stmt, User, sort_field, sort_order)
+
+        # Get total count before pagination
+        total = get_total_count(session, stmt)
+
+        # Apply pagination and execute
+        stmt = stmt.offset(offset).limit(limit)
+        users = session.exec(stmt).all()
+
+        result = [UserPublic.model_validate(user) for user in users]
+        set_pagination_headers(response, offset, len(result), total)
+
+        logger.info(f"Fetched {len(result)} users out of {total} total")
+        return result
+
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions from parse_query_params
     except Exception as e:
         logger.error(f"Error fetching users: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve users")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to retrieve users")
 
 
-@router.post(
-    "",
-    response_model=UserPublic,
-    summary="Create a new user",
-    description="Registers a new user account.",
-    dependencies=[Depends(get_current_superuser)],
-)
-def create_user(session: SessionDep, user_in: UserCreate) -> UserPublic:
-    # Check if email already exists
-    if get_user_by_email(session, user_in.email):
+@router.post("",
+             response_model=UserPublic,
+             status_code=status.HTTP_201_CREATED,
+             summary="Create a new user",
+             description="Register a new user account",
+             dependencies=[Depends(get_current_superuser)])
+def create_new_user(session: SessionDep, user_in: UserCreate) -> UserPublic:
+    """Create a new user account"""
+    logger.debug(f"Creating new user: {user_in.username}")
+
+    # Check if user already exists
+    if _check_user_exists(session, user_in.username, user_in.email):
         logger.warning(
-            f"User creation failed: email '{user_in.email}' already exists")
-        raise HTTPException(status_code=400,
-                            detail="A user with this email already exists")
-
-    # Check if username already exists
-    if user_in.username and get_user_by_username(session, user_in.username):
-        logger.warning(
-            f"User creation failed: username '{user_in.username}' already exists"
-        )
-        raise HTTPException(status_code=400,
-                            detail="A user with this name already exists")
+            f"User creation failed - already exists: {user_in.username}")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="User already exists")
 
     # Create the user
-    now = datetime.now(timezone.utc)
-    user_data = user_in.model_dump(exclude={"password"})
-    hashed_pw = hash_password(user_in.password)
-    user = User(**user_data,
-                hashed_password=hashed_pw,
-                created_at=now,
-                updated_at=now)
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-
-    logger.info(f"User created: username='{user.username}'")
-    return UserPublic.model_validate(user)
+    try:
+        user = create_user(session, user_in)
+        logger.info(f"Successfully created user: {user.username}")
+        return UserPublic.model_validate(user)
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions from create_user
+    except Exception as e:
+        logger.error(f"Unexpected error creating user {user_in.username}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to create user account")
 
 
 @router.get("/me",
             response_model=UserPublic,
             summary="Get current user profile",
-            description="Returns the authenticated user's public profile data.",
-            response_model_exclude_unset=True)
-def read_user_me(current_user: CurrentUser) -> UserPublic:
-    logger.debug(f"Returning profile for current user: {current_user.username}")
+            description="Return the authenticated user's profile data")
+def read_current_user(current_user: CurrentUser) -> UserPublic:
+    """Get the current authenticated user's profile"""
+    logger.debug(f"Fetching profile for current user: {current_user.username}")
     return UserPublic.model_validate(current_user)
 
 
 @router.get("/{user_id}",
             response_model=UserPublic,
             summary="Get user by ID",
-            description="Retrieve a user's public profile by their ID.")
-def read_user_by_id(user_id: uuid.UUID, session: SessionDep,
-                    current_user: CurrentUser) -> UserPublic:
+            description="Retrieve a user's profile by their ID",
+            dependencies=[Depends(get_current_superuser)])
+def read_user_by_id(user_id: uuid.UUID, session: SessionDep) -> UserPublic:
+    """Get a specific user by ID"""
+    logger.debug(f"Fetching user {user_id}")
+
+    # Get the user
     user = session.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if user.id != current_user.id and not current_user.is_superuser:
-        raise HTTPException(
-            status_code=403,
-            detail="You do not have permission to access this user",
-        )
+        logger.warning(f"User not found: {user_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="User not found")
+
+    logger.debug(f"Successfully retrieved user: {user.username}")
     return UserPublic.model_validate(user)

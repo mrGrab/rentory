@@ -258,8 +258,7 @@ def main():
         create_orders(session, count=20)
 
     data = {"username": "root", "password": "qwertyzz"}
-    r = requests.post("http://127.0.0.1:5233/api/v1/login/access-token",
-                      data=data)
+    r = requests.post("http://127.0.0.1:5233/api/v1/login", data=data)
 
     print("[blue]Token:[/]", r.json().get("access_token"))
 

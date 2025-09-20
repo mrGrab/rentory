@@ -6,6 +6,7 @@ CLI tool for managing application users.
 
 import sys
 import click
+from uuid import UUID
 from datetime import datetime, timezone
 from sqlmodel import Session, select
 from rich.prompt import Prompt
@@ -16,9 +17,8 @@ from pathlib import Path
 # Add parent directory to PYTHONPATH
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT_DIR))
-
-from core.dependency import hash_password, engine, get_user_by_email, get_user_by_username
-from core.models import User
+from core.database import engine, create_user, get_user_by_username, get_user_by_email
+from core.models import User, UserCreate
 
 console = Console()
 
@@ -27,65 +27,6 @@ console = Console()
 def cli() -> None:
     """User management CLI."""
     pass
-
-
-@cli.command("create")
-def create_user() -> None:
-    """Create a new user."""
-    with Session(engine) as session:
-        email = Prompt.ask("Enter user email")
-        if get_user_by_email(session, email):
-            console.print("[red]User with this email already exists[/red]")
-            return
-
-        username = Prompt.ask("Enter username")
-        if get_user_by_username(session, username):
-            console.print("[red]User with this username already exists[/red]")
-            return
-
-        password = Prompt.ask("Provide password", password=True)
-        hashed_password = hash_password(password)
-        now = datetime.now(timezone.utc)
-
-        try:
-            user = User(username=username,
-                        email=email,
-                        hashed_password=hashed_password,
-                        created_at=now,
-                        updated_at=now)
-            session.add(user)
-            session.commit()
-            console.print(
-                f"[green]New user '{username}' successfully created[/green]")
-        except Exception as e:
-            session.rollback()
-            console.print(f"[red]Error creating user:[/red] {e}")
-
-
-@cli.command("activate")
-@click.option("-u",
-              "--user",
-              "username",
-              required=True,
-              help="Username of the user to activate")
-def activate_user(username: str) -> None:
-    """Activate an existing user by username."""
-    with Session(engine) as session:
-        user = get_user_by_username(session, username)
-        if not user:
-            console.print(
-                f"[red]No user found with username '{username}'[/red]")
-            return
-
-        try:
-            user.is_active = True
-            user.updated_at = datetime.now(timezone.utc)
-            session.commit()
-            console.print(
-                f"[green]User '{username}' has been activated[/green]")
-        except Exception as e:
-            session.rollback()
-            console.print(f"[red]Error activating user:[/red] {e}")
 
 
 @cli.command("list")
@@ -103,11 +44,76 @@ def list_users() -> None:
         table.add_column("Email")
         table.add_column("Active")
         table.add_column("Admin")
+        table.add_column("External")
 
         for user in users:
             table.add_row(str(user.id), user.username, user.email,
-                          str(user.is_active), str(user.is_superuser))
+                          str(user.is_active), str(user.is_superuser),
+                          str(user.is_external))
         console.print(table)
+
+
+@cli.command("create")
+def create_new_user() -> None:
+    """Create a new user."""
+    with Session(engine) as session:
+        email = Prompt.ask("Enter user email")
+        username = Prompt.ask("Enter username")
+        if get_user_by_email(session, email) or get_user_by_username(
+                session, username):
+            console.print("[red]User already exists[/red]")
+            return
+        password = Prompt.ask("Provide password", password=True)
+
+        try:
+            user_in = UserCreate(username=username,
+                                 email=email,
+                                 password=password)
+            create_user(session, user_in)
+            console.print(
+                f"[green]New user '{username}' successfully created[/green]")
+        except Exception as e:
+            console.print(f"[red]Error creating user:[/red] {e}")
+
+
+@cli.command("activate")
+@click.option("-u",
+              "--user",
+              "username",
+              default=None,
+              help="Username of the user to activate")
+@click.option("-i",
+              "--id",
+              "user_id",
+              default=None,
+              help="Username of the user to activate")
+def activate_user(username: str | None, user_id: UUID | None) -> None:
+    """Activate an existing user by username."""
+    if not username and not user_id:
+        console.print(f"[red]Username or user idshould be provided[/red]")
+
+    with Session(engine) as session:
+
+        try:
+
+            if username:
+                user = get_user_by_username(session, username)
+            elif user_id:
+                user = session.get(User, UUID(user_id))
+
+            if not user:
+                console.print(
+                    f"[red]No user found with username '{username}'[/red]")
+                return
+
+            user.is_active = True
+            user.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            console.print(
+                f"[green]User '{user.username}' has been activated[/green]")
+        except Exception as e:
+            session.rollback()
+            console.print(f"[red]Error activating user:[/red] {e}")
 
 
 if __name__ == "__main__":

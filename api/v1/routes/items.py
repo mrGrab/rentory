@@ -1,17 +1,15 @@
-import json
 from uuid import UUID
 from datetime import datetime, timezone, date
-from fastapi import APIRouter, HTTPException, Depends, Query, status, Response
-from fastapi.responses import JSONResponse
+from typing import List, Optional
+from fastapi import APIRouter, HTTPException, Query, status, Response
 from sqlmodel import select, func
 from sqlalchemy.orm import selectinload
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
+
 from core.logger import logger
-from core.dependency import (
-    SessionDep,
-    CurrentUser,
-    get_current_user,
-    get_current_superuser,
+from core.dependencies import SessionDep, CurrentUser
+from core.database import (
+    parse_query_params,
     calculate_pagination,
     apply_sorting,
     get_total_count,
@@ -33,321 +31,390 @@ from core.models import (
 router = APIRouter(prefix="/items", tags=["Items"])
 
 
-def _transform_to_public(item: Item) -> ItemPublic:
+def transform_item_to_public(item: Item) -> ItemPublic:
+    """Transform database Item to public schema with order IDs"""
     order_ids = set()
     for variant in item.variants:
         for link in variant.order_links:
             order_ids.add(link.order_id)
+
     return ItemPublic.model_validate(item,
                                      update={"order_ids": list(order_ids)})
 
 
-def _apply_filters(stmt, f: ItemFilters):
-    """Apply all filters to the query statement."""
+def apply_item_filters(stmt, filters: ItemFilters):
+    """Apply all filters to the item query statement"""
 
-    if any([f.color, f.size, f.variant_status]):
+    # Join ItemVariant if any variant-specific filters are present
+    if any([filters.color, filters.size, filters.variant_status]):
         stmt = stmt.join(ItemVariant, Item.id == ItemVariant.item_id)
 
     # Item ID filter
-    if f.id:
-        if isinstance(f.id, list):
-            stmt = stmt.where(Item.id.in_(f.id))
+    if filters.id:
+        if isinstance(filters.id, list):
+            stmt = stmt.where(Item.id.in_(filters.id))
         else:
-            stmt = stmt.where(Item.id.contains(f.id))
-    # Item by name
-    if f.title:
-        stmt = stmt.where(Item.title.ilike(f"%{f.title}%"))
-    if f.q:
-        stmt = stmt.where(Item.title.ilike(f"%{f.q}%"))
+            stmt = stmt.where(Item.id.contains(filters.id))
 
-    # Filter by category
-    if f.category:
-        stmt = stmt.where(Item.category == f.category)
+    # Title filters (both title and q for search)
+    if filters.title:
+        stmt = stmt.where(
+            text("title REGEXP :pattern")).params(pattern=f"^{filters.title}")
+
+    if filters.q:
+        stmt = stmt.where(Item.title.ilike(f"%{filters.q}%"))
+
+    # Category filter
+    if filters.category:
+        stmt = stmt.where(Item.category == filters.category)
 
     # Status filter
-    if f.status:
-        stmt = stmt.where(Item.status == f.status.value)
+    if filters.status:
+        stmt = stmt.where(Item.status == filters.status.value)
 
     # Tag filter
-    if f.tag:
-        stmt = stmt.where(Item.tags.contains(f.tag))
+    if filters.tag:
+        stmt = stmt.where(Item.tags.contains(filters.tag))
 
-    # Color filter
-    if f.color:
-        stmt = stmt.where(ItemVariant.color == f.color)
+    # Variant-specific filters
+    if filters.color:
+        stmt = stmt.where(ItemVariant.color == filters.color)
 
-    # Size filter
-    if f.size:
-        stmt = stmt.where(ItemVariant.size == f.size)
+    if filters.size:
+        stmt = stmt.where(ItemVariant.size == filters.size)
 
-    # Variant filter
-    if f.variant_status:
-        stmt = stmt.where(ItemVariant.status == f.variant_status)
+    if filters.variant_status:
+        stmt = stmt.where(ItemVariant.status == filters.variant_status)
 
     return stmt.distinct()
 
 
-def create_filters_endpoint(path: str, model: object, field: str):
+def create_dropdown_endpoint(path: str, model: type, field_name: str):
+    """Create a dropdown endpoint for distinct field values"""
 
-    @router.get(path,
-                response_model=list[str],
-                summary=f"List items {field}",
-                description=f"Retrieve a distinct list of item {field}.",
-                dependencies=[Depends(get_current_user)])
-    def endpoint(session: SessionDep):
+    @router.get(
+        path,
+        response_model=List[str],
+        summary=f"Get {field_name} options",
+        description=
+        f"Retrieve distinct list of {field_name} values for dropdown filters")
+    def get_field_options(session: SessionDep,
+                          current_user: CurrentUser) -> List[str]:
+        """Get distinct field values for dropdown"""
         try:
-            obj_field = getattr(model, field)
-            stmt = select(obj_field).where(obj_field.is_not(None)).distinct()
+            field_attr = getattr(model, field_name)
+            stmt = select(field_attr).where(field_attr.is_not(None)).distinct()
             results = session.exec(stmt).all()
-            return JSONResponse(results)
+
+            # Filter out None values and convert to strings
+            filtered_results = [
+                str(result) for result in results if result is not None
+            ]
+
+            logger.debug(
+                f"Retrieved {len(filtered_results)} {field_name} options")
+            return sorted(filtered_results)
+
         except Exception as e:
-            logger.error(f"Error fetching item {field}: {e}")
-            raise HTTPException(status_code=500,
-                                detail=f"Failed to fetch item {field}")
+            logger.error(f"Error fetching {field_name} options: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to fetch {field_name} options")
+
+    return get_field_options
 
 
-# Dynamic endpoints for dropdown filters
-create_filters_endpoint("/categories", Item, "category")
-create_filters_endpoint("/statuses", Item, "status")
-create_filters_endpoint("/sizes", ItemVariant, "size")
-create_filters_endpoint("/colors", ItemVariant, "color")
-create_filters_endpoint("/variant_statuses", ItemVariant, "status")
+# Create dropdown endpoints
+create_dropdown_endpoint("/categories", Item, "category")
+create_dropdown_endpoint("/statuses", Item, "status")
+create_dropdown_endpoint("/sizes", ItemVariant, "size")
+create_dropdown_endpoint("/colors", ItemVariant, "color")
+create_dropdown_endpoint("/variant-statuses", ItemVariant, "status")
 
 
 @router.get("",
-            summary="List items",
-            description="Retrieve a paginated list of available items.",
-            dependencies=[Depends(get_current_user)])
-async def read_items(response: Response,
-                     session: SessionDep,
-                     filter_: str = Query("{}", alias="filter"),
-                     range_: str = Query("[0, 500]", alias="range"),
-                     sort: str = Query('["id","DESC"]', alias="sort")):
-    try:
-        # Parse inputs
-        sort_field, sort_order = json.loads(sort)
-        offset, limit = calculate_pagination(json.loads(range_))
-        filter_dict = json.loads(filter_)
-        filters = ItemFilters(**filter_dict)
+            response_model=List[ItemPublic],
+            summary="List items with pagination",
+            description="Retrieve a paginated list of items")
+def read_items(
+        response: Response,
+        session: SessionDep,
+        current_user: CurrentUser,
+        filter_: str = Query("{}", alias="filter"),
+        range_: str = Query("[0, 500]", alias="range"),
+        sort: str = Query('["id","DESC"]', alias="sort"),
+) -> List[ItemPublic]:
+    """List items with filtering, sorting, and pagination"""
 
+    try:
+        # Parse query parameters
+        filter_dict, range_list, sort_field, sort_order = parse_query_params(
+            filter_, range_, sort)
+
+        # Build filters and pagination
+        filters = ItemFilters(**filter_dict)
+        offset, limit = calculate_pagination(range_list)
+
+        # Build query with eager loading for performance
         stmt = select(Item).options(
             selectinload(Item.variants).selectinload(ItemVariant.order_links))
 
-        # Apply filters
-        stmt = _apply_filters(stmt, filters)
-
-        # Apply sorting
+        # Apply filters and sorting
+        stmt = apply_item_filters(stmt, filters)
         stmt = apply_sorting(stmt, Item, sort_field, sort_order)
 
-        # Total count
+        # Get total count before pagination
         total = get_total_count(session, stmt)
 
-        # Apply pagination
+        # Apply pagination and execute
         stmt = stmt.offset(offset).limit(limit)
         items = session.exec(stmt).all()
 
-        # Build response models
-        result = [_transform_to_public(item) for item in items]
+        # Transform to public schema
+        result = [transform_item_to_public(item) for item in items]
 
+        # Set pagination headers
         set_pagination_headers(response, offset, len(result), total)
-        logger.info(f"Fetched {len(result)} items out of {total} total")
+
+        logger.info(
+            f"Retrieved {len(result)} of {total} items for user {current_user.username}"
+        )
         return result
 
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions from parse_query_params
     except Exception as e:
-        logger.error(f"Error fetching items: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve items")
+        logger.error(f"Failed to retrieve items: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to retrieve items")
 
 
 @router.post("",
              response_model=ItemPublic,
-             summary="Create a new item",
-             description="Adds a new item to the catalog.",
-             dependencies=[Depends(get_current_user)])
-def create_item(session: SessionDep, item_in: ItemCreate):
-    logger.debug(f"Creating new item with title='{item_in.title}'")
-    now = datetime.now(timezone.utc)
+             status_code=status.HTTP_201_CREATED,
+             summary="Create new item",
+             description="Create a new item with variants and prices")
+def create_item(session: SessionDep, current_user: CurrentUser,
+                item_in: ItemCreate) -> ItemPublic:
+    """Create a new item"""
+    logger.debug(f"User {current_user.username} creating item: {item_in.title}")
+
+    # Check for duplicate title
+    stmt = select(Item.id).where(Item.title == item_in.title)
+    existing_item = session.exec(stmt).one_or_none()
+    if existing_item:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Item with title '{item_in.title}' already exists")
 
     try:
+        # Create variants with their prices
         variants = []
         for variant_in in item_in.variants:
-            prices = [
-                ItemPrice(**price.model_dump()) for price in variant_in.prices
-            ]
+            # Create prices for this variant
+            prices = [ItemPrice(**p.model_dump()) for p in variant_in.prices]
+            # Create variant with prices
             variant = ItemVariant(**variant_in.model_dump(exclude={"prices"}),
                                   prices=prices)
             variants.append(variant)
 
-        # Create the main Item
+        # Create the main item
         item = Item(**item_in.model_dump(exclude={"variants"}),
-                    created_at=now,
-                    updated_at=now,
                     variants=variants)
 
         session.add(item)
         session.commit()
         session.refresh(item)
 
-        logger.info(f"Item created successfully: {item.id}")
-        return _transform_to_public(item)
+        logger.info(
+            f"Item created successfully: {item.id} by {current_user.username}")
+        return transform_item_to_public(item)
 
-    except IntegrityError as ie:
-        session.rollback()
-        if "unique constraint" in str(ie).lower():
-            logger.warning(f"An item '{item_in.title}' already exists.")
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"An item with title '{item_in.title}' already exists.")
     except Exception as e:
         session.rollback()
-        logger.exception(f"Unexpected error while creating item: {e}")
+        logger.error(f"Failed to create item {item_in.title}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail="Failed to create item")
 
 
-@router.get("/availability/{id}",
+@router.get("/{item_id}/availability",
             response_model=ItemPublic,
-            summary="Get item by ID with variants availability",
-            description="Fetch a single item and check availability.",
-            dependencies=[Depends(get_current_user)])
+            summary="Check item availability",
+            description="Get item with availability status")
 def check_item_availability(session: SessionDep,
-                            id: UUID,
-                            start_time: date | None = None,
-                            end_time: date | None = None):
-    logger.debug(f"Fetching and check item with ID: {id}")
+                            current_user: CurrentUser,
+                            item_id: UUID,
+                            start_time: Optional[date] = None,
+                            end_time: Optional[date] = None) -> ItemPublic:
+    """Check item availability for a specific time period"""
+    logger.debug(
+        f"User {current_user.username} checking availability for item {item_id} from {start_time} to {end_time}"
+    )
 
-    stmt = select(Item).where(Item.id == id)
-    item = session.exec(stmt).first()
+    item = session.get(Item, item_id)
     if not item:
-        logger.warning(f"Item not found: {id}")
-        raise HTTPException(status_code=404, detail="Item not found")
+        logger.warning(f"Item not found: {item_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Item not found")
 
+    # Check availability if time range is provided
     if start_time and end_time:
+        if start_time > end_time:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Start time must be before end time")
+
         variant_ids = [v.id for v in item.variants]
 
-        stmt = select(OrderItemLink.item_variant_id).join(Order)
-        stmt = stmt.where(OrderItemLink.item_variant_id.in_(variant_ids))
-        stmt = stmt.where(Order.start_time <= end_time, Order.end_time
-                          >= start_time)
-        result = session.exec(stmt.distinct()).all()
+        # Find variants that are booked during the requested period
+        booking_stmt = select(OrderItemLink.item_variant_id).join(Order)
+        booking_stmt = booking_stmt.where(
+            OrderItemLink.item_variant_id.in_(variant_ids),
+            Order.status.not_in(["cancelled", "done"]), Order.start_time
+            <= end_time, Order.end_time >= start_time)
+        booked_variant_ids = session.exec(booking_stmt.distinct()).all()
 
+        # Update variant availability status
         for variant in item.variants:
+            # Check if variant is under maintenance
             if variant.service_end_time and variant.service_end_time > start_time:
                 variant.status = ItemVariantStatus.UNAVAILABLE
-            elif variant.id in result:
+            # Check if variant is booked
+            elif variant.id in booked_variant_ids:
                 variant.status = ItemVariantStatus.UNAVAILABLE
 
-    logger.info(f"Item retrieved: {item.id} - {item.title}")
-    return _transform_to_public(item)
+    logger.info(f"Availability checked for item: {item.id} - {item.title}")
+    return transform_item_to_public(item)
 
 
-@router.get("/{id}",
+@router.get("/{item_id}",
             response_model=ItemPublic,
             summary="Get item by ID",
-            description="Fetch a single item by its unique ID.",
-            dependencies=[Depends(get_current_user)])
-def read_item(session: SessionDep, id: UUID) -> ItemPublic:
-    logger.debug(f"Fetching item with ID: {id}")
+            description="Retrieve a specific item by its ID")
+def read_item(session: SessionDep, current_user: CurrentUser,
+              item_id: UUID) -> ItemPublic:
+    """Get a specific item by ID"""
+    logger.debug(f"User {current_user.username} fetching item {item_id}")
 
-    stmt = select(Item).where(Item.id == id)
-
-    item = session.exec(stmt).first()
+    item = session.get(Item, item_id)
     if not item:
-        logger.warning(f"Item not found: {id}")
-        raise HTTPException(status_code=404, detail="Item not found")
+        logger.warning(f"Item not found: {item_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Item not found")
 
     logger.info(f"Item retrieved: {item.id} - {item.title}")
-    return _transform_to_public(item)
+    return transform_item_to_public(item)
 
 
-@router.put("/{id}",
+@router.put("/{item_id}",
             response_model=ItemPublic,
-            summary="Update item by ID",
-            description="Update an existing item's details by its unique ID.",
-            dependencies=[Depends(get_current_superuser)])
-def update_item(session: SessionDep, id: UUID, item_in: ItemUpdate):
-    logger.info(f"Updating item ID {id}")
+            summary="Update item",
+            description="Update an existing item (superuser only)")
+def update_item(session: SessionDep, current_user: CurrentUser, item_id: UUID,
+                item_in: ItemUpdate) -> ItemPublic:
+    """Update an existing item"""
+    logger.info(f"User {current_user.username} updating item {item_id}")
 
-    stmt = (select(Item).options(
+    # Get item with all relationships loaded
+    stmt = select(Item).options(
         selectinload(Item.variants).selectinload(
-            ItemVariant.prices)).where(Item.id == id))
+            ItemVariant.prices)).where(Item.id == item_id)
     item = session.exec(stmt).one_or_none()
     if not item:
-        logger.warning(f"Item with ID {id} not found")
-        raise HTTPException(status_code=404, detail="Item not found")
-
+        logger.warning(f"Item not found for update: {item_id}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Item not found")
     try:
+        # Update basic item fields
         update_data = item_in.model_dump(exclude={"variants"},
                                          exclude_unset=True)
         for field, value in update_data.items():
             setattr(item, field, value)
 
-        # Handle variants if provided
+        # Update variants if provided
         if hasattr(item_in, 'variants') and item_in.variants:
             existing_variants = {v.id: v for v in item.variants}
             updated_variants = []
+
             for variant_in in item_in.variants:
                 if variant_in.id and variant_in.id in existing_variants:
                     # Update existing variant
+                    variant = existing_variants[variant_in.id]
                     variant_data = variant_in.model_dump(exclude={"prices"},
                                                          exclude_unset=True)
-                    variant = existing_variants[variant_in.id]
                     for field, value in variant_data.items():
-                        setattr(variant, field, value)
+                        if field != "id":  # Don't update the ID
+                            setattr(variant, field, value)
                 else:
-                    # Add new variant
+                    # Create new variant
                     variant_data = variant_in.model_dump(exclude={"prices"})
                     variant = ItemVariant(**variant_data)
 
-                # Update prices
-                variant.prices = [
-                    ItemPrice(**price.model_dump())
-                    for price in variant_in.prices
-                ]
+                # Update variant prices
+                if variant_in.prices:
+                    variant.prices = [
+                        ItemPrice(**price.model_dump())
+                        for price in variant_in.prices
+                    ]
+
                 updated_variants.append(variant)
+
             item.variants = updated_variants
 
+        # Update timestamp
         item.updated_at = datetime.now(timezone.utc)
         session.commit()
+        session.refresh(item)
 
-        logger.info(f"Item updated successfully: {item.id}")
-        return _transform_to_public(item)
+        logger.info(f"Item updated successfully: {item_id}")
+        return transform_item_to_public(item)
 
     except Exception as e:
-        logger.exception(f"Failed to update item ID {id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update item")
+        session.rollback()
+        logger.error(f"Failed to update item {item_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to update item")
 
 
-@router.delete("/{id}",
+@router.delete("/{item_id}",
                status_code=status.HTTP_200_OK,
-               summary="Delete an item",
-               description="Deletes an item by ID")
-def delete_item(session: SessionDep, current_user: CurrentUser, id: UUID):
+               summary="Delete item",
+               description="Delete an item by ID")
+def delete_item(session: SessionDep, current_user: CurrentUser, item_id: UUID):
+    """Delete an item"""
     logger.debug(
-        f"Attempting to delete item '{id}' by '{current_user.username}'")
+        f"User {current_user.username} attempting to delete item {item_id}")
 
-    item = session.get(Item, id)
+    # Get the item
+    item = session.get(Item, item_id)
     if not item:
-        logger.warning(f"Item not found: ID='{id}'")
+        logger.warning(f"Item not found for deletion: {item_id}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Item not found")
-    if not current_user.is_superuser:
+
+    # Check if item has any active orders
+    active_orders_stmt = select(func.count(OrderItemLink.order_id)).join(
+        ItemVariant, OrderItemLink.item_variant_id == ItemVariant.id).join(
+            Order, OrderItemLink.order_id == Order.id).where(
+                ItemVariant.item_id == item_id,
+                Order.status.not_in(["cancelled", "done"]))
+
+    active_orders_count = session.exec(active_orders_stmt).one()
+    if active_orders_count > 0:
         logger.warning(
-            f"Permission denied for '{current_user.username}' on item '{id}'")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Not enough permissions")
-    # Check if item is linked to any orders
-    if item.order_links:
-        logger.warning(f"Item '{id}' is linked to orders and cannot be deleted")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete item: it is linked to one or more orders")
+            f"Item {item_id} has active orders and cannot be deleted")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Cannot delete item: it has active orders")
+
     try:
         session.delete(item)
         session.commit()
-        logger.info(f"Item deleted successfully: ID='{id}'")
-        return JSONResponse(content={"message": "Item deleted successfully"},
-                            status_code=status.HTTP_200_OK)
+
+        logger.info(
+            f"Item {item_id} deleted successfully by {current_user.username}")
+        return {"message": f"Item {item_id} deleted successfully"}
+
     except Exception as e:
-        logger.exception(f"Failed to delete item ID='{id}': {str(e)}")
+        session.rollback()
+        logger.error(f"Failed to delete item {item_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail="Failed to delete item")

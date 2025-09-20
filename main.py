@@ -12,10 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import settings
 from core.logger import logger, LOG_LEVELS, LOGGING_CONFIG
-from core.dependency import create_db_and_tables
-from api.main import router as api_v1_router
+from core.database import create_db_and_tables
+from api.main import router as api_router
 
 log_level = settings.LOG_LEVEL.lower()
+
+# Ensure upload directory exists
+os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 
 
 @asynccontextmanager
@@ -24,7 +27,6 @@ async def lifespan(app: FastAPI):
 
     logger.setLevel(LOG_LEVELS[log_level])
     try:
-        os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
         create_db_and_tables()
     except Exception as e:
         print("PRE starting error: ", e)
@@ -44,30 +46,32 @@ app = FastAPI(title="Rentory",
 - **v1**: Current stable version
 """)
 
+# Add middleware
 app.add_middleware(SessionMiddleware, secret_key=settings.SESSION_SECRET_KEY)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5233", "http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Content-Range"],
-)
+app.add_middleware(CORSMiddleware,
+                   allow_origins=settings.BACKEND_CORS_ORIGINS,
+                   allow_credentials=True,
+                   allow_methods=["*"],
+                   allow_headers=["*"],
+                   expose_headers=["Content-Range"])
 
 
+# Routes
 @app.get('/robots.txt', response_class=PlainTextResponse)
 def robots():
     """Returns a simple robots.txt file."""
     return """User-agent: *\nDisallow: /"""
 
 
-# Register routers
-app.include_router(api_v1_router)
+# Include API router
+app.include_router(api_router)
+
+# Static files
 app.mount(f"/{settings.UPLOAD_DIR}",
           StaticFiles(directory=settings.UPLOAD_DIR),
           name="static")
-app.mount("/", StaticFiles(directory="frontend/dist", html=True))
+if os.path.exists("frontend/dist"):
+    app.mount("/", StaticFiles(directory="frontend/dist", html=True))
 
 # Run Uvicorn server
 if __name__ == '__main__':
