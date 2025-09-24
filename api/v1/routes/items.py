@@ -7,11 +7,16 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import text
 
 # --- Project Imports ---
+import core.query_utils as qp
 from core.logger import logger
-from core.query_utils import *
-from core.exceptions import *
 from core.dependencies import CurrentUser
 from core.database import SessionDep
+from core.exceptions import (
+    InternalErrorException,
+    ConflictException,
+    NotFoundException,
+    BadRequestException,
+)
 from core.models import (
     Item,
     ItemFilters,
@@ -141,12 +146,12 @@ def read_items(
 
     try:
         # Parse query parameters
-        filter_dict, range_list, sort_field, sort_order = parse_query_params(
+        filter_dict, range_list, sort_field, sort_order = qp.parse_params(
             filter_, range_, sort)
 
         # Build filters and pagination
         filters = ItemFilters(**filter_dict)
-        offset, limit = calculate_pagination(range_list)
+        offset, limit = qp.calculate_pagination(range_list)
 
         # Build query with eager loading for performance
         stmt = select(Item).options(
@@ -154,10 +159,10 @@ def read_items(
 
         # Apply filters and sorting
         stmt = apply_item_filters(stmt, filters)
-        stmt = apply_sorting(stmt, Item, sort_field, sort_order)
+        stmt = qp.apply_sorting(stmt, Item, sort_field, sort_order)
 
         # Get total count before pagination
-        total = get_total_count(session, stmt)
+        total = qp.get_total_count(session, stmt)
 
         # Apply pagination and execute
         stmt = stmt.offset(offset).limit(limit)
@@ -165,7 +170,7 @@ def read_items(
 
         # Transform to public schema
         result = [transform_item_to_public(item) for item in items]
-        set_pagination_headers(response, offset, len(result), total)
+        qp.set_pagination_headers(response, offset, len(result), total)
 
         logger.info(
             f"Retrieved {len(result)} of {total} items for user {current_user.username}"

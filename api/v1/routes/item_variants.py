@@ -5,11 +5,15 @@ from fastapi import APIRouter, Query, Response
 from sqlmodel import select
 
 # --- Project Imports ---
+import core.query_utils as qp
 from core.logger import logger
-from core.query_utils import *
-from core.exceptions import *
 from core.dependencies import CurrentUser
 from core.database import SessionDep
+from core.exceptions import (
+    InternalErrorException,
+    NotFoundException,
+    BadRequestException,
+)
 from core.models import (
     ItemVariant,
     ItemVariantPublic,
@@ -20,7 +24,7 @@ from core.models import (
 router = APIRouter(prefix="/variants", tags=["Items"])
 
 
-def _apply_filters(stmt, filters: ItemVariantFilters):
+def apply_filters(stmt, filters: ItemVariantFilters):
     """Apply filters to query statement"""
     if filters.id:
         stmt = stmt.where(ItemVariant.id.in_(filters.id))
@@ -56,20 +60,20 @@ async def read_variants(
 ) -> List[ItemVariantPublic]:
     try:
         # Parse inputs
-        filter_dict, range_list, sort_field, sort_order = parse_query_params(
+        filter_dict, range_list, sort_field, sort_order = qp.parse_params(
             filter_, range_, sort)
 
         # Build filters and pagination
         filters = ItemVariantFilters(**filter_dict)
-        offset, limit = calculate_pagination(range_list)
+        offset, limit = qp.calculate_pagination(range_list)
 
         # Build base query
         stmt = select(ItemVariant)
-        stmt = _apply_filters(stmt, filters)
-        stmt = apply_sorting(stmt, ItemVariant, sort_field, sort_order)
+        stmt = apply_filters(stmt, filters)
+        stmt = qp.apply_sorting(stmt, ItemVariant, sort_field, sort_order)
 
         # Get total count before pagination
-        total = get_total_count(session, stmt)
+        total = qp.get_total_count(session, stmt)
 
         # Apply pagination
         stmt = stmt.offset(offset).limit(limit)
@@ -77,7 +81,7 @@ async def read_variants(
 
         result = [ItemVariantPublic.model_validate(v) for v in variants]
 
-        set_pagination_headers(response, offset, len(result), total)
+        qp.set_pagination_headers(response, offset, len(result), total)
         logger.info(
             f"Fetched {len(variants)} variants out of {total} total for user {current_user.username}"
         )

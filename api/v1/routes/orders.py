@@ -5,11 +5,17 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlmodel import select
 
 # --- Project Imports ---
+import core.query_utils as qp
 from core.logger import logger
-from core.exceptions import *
-from core.query_utils import *
 from core.dependencies import CurrentUser
 from core.database import SessionDep
+from core.exceptions import (
+    InternalErrorException,
+    ConflictException,
+    NotFoundException,
+    BadRequestException,
+    PermissionException,
+)
 from core.models import (
     Order,
     Client,
@@ -162,20 +168,20 @@ def read_orders(
 
     try:
         # Parse query parameters using the utility function
-        filter_dict, range_list, sort_field, sort_order = parse_query_params(
+        filter_dict, range_list, sort_field, sort_order = qp.parse_params(
             filter_, range_, sort)
 
         # Build filters and pagination
         filters = OrderFilters(**filter_dict)
-        offset, limit = calculate_pagination(range_list)
+        offset, limit = qp.calculate_pagination(range_list)
 
         # Build base query
         stmt = select(Order)
         stmt = apply_order_filters(stmt, filters)
-        stmt = apply_sorting(stmt, Order, sort_field, sort_order)
+        stmt = qp.apply_sorting(stmt, Order, sort_field, sort_order)
 
         # Get total count before pagination
-        total = get_total_count(session, stmt)
+        total = qp.get_total_count(session, stmt)
 
         # Apply pagination and execute
         stmt = stmt.offset(offset).limit(limit)
@@ -185,7 +191,7 @@ def read_orders(
         result = [transform_order_to_public(order) for order in orders]
 
         # Set response headers
-        set_pagination_headers(response, offset, len(result), total)
+        qp.set_pagination_headers(response, offset, len(result), total)
 
         logger.info(
             f"Retrieved {len(result)} of {total} orders for user {current_user.username}"

@@ -4,17 +4,26 @@ from sqlmodel import select
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 # --- Project Imports ---
-from core.query_utils import *
+import core.query_utils as qp
 from core.logger import logger
 from core.models import UserCreate, UserPublic, User, UserFilters
 from core.dependencies import CurrentUser, get_current_superuser
-from core.database import create_user, get_user_by_username, get_user_by_email, SessionDep
-from core.exceptions import InternalErrorException, NotFoundException, ConflictException
+from core.database import (
+    SessionDep,
+    create_user,
+    get_user_by_username,
+    get_user_by_email,
+)
+from core.exceptions import (
+    InternalErrorException,
+    NotFoundException,
+    ConflictException,
+)
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-def _check_user_exists(session: SessionDep, username: str, email: str) -> bool:
+def check_user_exists(session: SessionDep, username: str, email: str) -> bool:
     """Check if user already exists by username or email"""
     if get_user_by_username(session, username):
         return True
@@ -23,7 +32,7 @@ def _check_user_exists(session: SessionDep, username: str, email: str) -> bool:
     return False
 
 
-def _apply_filters(stmt, filters: UserFilters):
+def apply_filters(stmt, filters: UserFilters):
     """Apply user filters to the query statement"""
     if filters.id:
         if isinstance(filters.id, list):
@@ -57,27 +66,27 @@ def read_users(response: Response,
 
     try:
         # Parse query parameters
-        filter_dict, range_list, sort_field, sort_order = parse_query_params(
+        filter_dict, range_list, sort_field, sort_order = qp.parse_params(
             filter_, range_, sort)
 
         # Build filters
         filters = UserFilters(**filter_dict)
-        offset, limit = calculate_pagination(range_list)
+        offset, limit = qp.calculate_pagination(range_list)
 
         # Build query
         stmt = select(User)
-        stmt = _apply_filters(stmt, filters)
-        stmt = apply_sorting(stmt, User, sort_field, sort_order)
+        stmt = apply_filters(stmt, filters)
+        stmt = qp.apply_sorting(stmt, User, sort_field, sort_order)
 
         # Get total count before pagination
-        total = get_total_count(session, stmt)
+        total = qp.get_total_count(session, stmt)
 
         # Apply pagination and execute
         stmt = stmt.offset(offset).limit(limit)
         users = session.exec(stmt).all()
 
         result = [UserPublic.model_validate(user) for user in users]
-        set_pagination_headers(response, offset, len(result), total)
+        qp.set_pagination_headers(response, offset, len(result), total)
 
         logger.info(f"Fetched {len(result)} users out of {total} total")
         return result
@@ -100,7 +109,7 @@ def create_new_user(session: SessionDep, user_in: UserCreate) -> UserPublic:
     logger.debug(f"Creating new user: {user_in.username}")
 
     # Check if user already exists
-    if _check_user_exists(session, user_in.username, user_in.email):
+    if check_user_exists(session, user_in.username, user_in.email):
         logger.warning(
             f"User creation failed - already exists: {user_in.username}")
         raise ConflictException("User already exists")

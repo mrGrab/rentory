@@ -5,11 +5,16 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, status, Response
 
 # --- Project Imports ---
+import core.query_utils as qp
 from core.logger import logger
-from core.query_utils import *
-from core.exceptions import *
 from core.dependencies import CurrentUser
 from core.database import SessionDep
+from core.exceptions import (
+    InternalErrorException,
+    ConflictException,
+    NotFoundException,
+    BadRequestException,
+)
 from core.models import (
     Client,
     ClientCreate,
@@ -63,20 +68,20 @@ def read_clients(
     logger.debug(f"User {current_user.username} fetching clients")
     try:
         # Parse query parameters
-        filter_dict, range_list, sort_field, sort_order = parse_query_params(
+        filter_dict, range_list, sort_field, sort_order = qp.parse_params(
             filter_, range_, sort)
 
         # Build filters and pagination
         filters = ClientFilters(**filter_dict)
-        offset, limit = calculate_pagination(range_list)
+        offset, limit = qp.calculate_pagination(range_list)
 
         # Build base query
         stmt = select(Client)
         stmt = apply_client_filters(stmt, filters)
-        stmt = apply_sorting(stmt, Client, sort_field, sort_order)
+        stmt = qp.apply_sorting(stmt, Client, sort_field, sort_order)
 
         # Get total count
-        total = get_total_count(session, stmt)
+        total = qp.get_total_count(session, stmt)
 
         # Apply pagination and execute
         stmt = stmt.offset(offset).limit(limit)
@@ -86,7 +91,7 @@ def read_clients(
         result = [transform_client_to_public(client) for client in clients]
 
         # Set response headers
-        set_pagination_headers(response, offset, len(result), total)
+        qp.set_pagination_headers(response, offset, len(result), total)
         logger.info(f"Retrieved {len(result)}/{total} clients")
 
         return result
