@@ -1,16 +1,15 @@
 # coding: UTF-8
-
 import uuid
 from sqlmodel import select
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+# --- Project Imports ---
+from core.query_utils import *
 from core.logger import logger
-from core.dependencies import SessionDep, CurrentUser, get_current_superuser
-from core.database import (parse_query_params, calculate_pagination,
-                           apply_sorting, get_total_count,
-                           set_pagination_headers, create_user,
-                           get_user_by_username, get_user_by_email)
 from core.models import UserCreate, UserPublic, User, UserFilters
+from core.dependencies import CurrentUser, get_current_superuser
+from core.database import create_user, get_user_by_username, get_user_by_email, SessionDep
+from core.exceptions import InternalErrorException, NotFoundException, ConflictException
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -87,8 +86,7 @@ def read_users(response: Response,
         raise  # Re-raise HTTP exceptions from parse_query_params
     except Exception as e:
         logger.error(f"Error fetching users: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Failed to retrieve users")
+        raise InternalErrorException("Failed to retrieve users")
 
 
 @router.post("",
@@ -105,8 +103,7 @@ def create_new_user(session: SessionDep, user_in: UserCreate) -> UserPublic:
     if _check_user_exists(session, user_in.username, user_in.email):
         logger.warning(
             f"User creation failed - already exists: {user_in.username}")
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail="User already exists")
+        raise ConflictException("User already exists")
 
     # Create the user
     try:
@@ -117,8 +114,7 @@ def create_new_user(session: SessionDep, user_in: UserCreate) -> UserPublic:
         raise  # Re-raise HTTP exceptions from create_user
     except Exception as e:
         logger.error(f"Unexpected error creating user {user_in.username}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Failed to create user account")
+        raise InternalErrorException("Failed to create user account")
 
 
 @router.get("/me",
@@ -144,8 +140,7 @@ def read_user_by_id(user_id: uuid.UUID, session: SessionDep) -> UserPublic:
     user = session.get(User, user_id)
     if not user:
         logger.warning(f"User not found: {user_id}")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail="User not found")
+        raise NotFoundException("User not found")
 
     logger.debug(f"Successfully retrieved user: {user.username}")
     return UserPublic.model_validate(user)

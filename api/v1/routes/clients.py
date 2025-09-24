@@ -4,15 +4,12 @@ from sqlmodel import select, func
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, status, Response
 
+# --- Project Imports ---
 from core.logger import logger
-from core.dependencies import SessionDep, CurrentUser
-from core.database import (
-    parse_query_params,
-    calculate_pagination,
-    apply_sorting,
-    get_total_count,
-    set_pagination_headers,
-)
+from core.query_utils import *
+from core.exceptions import *
+from core.dependencies import CurrentUser
+from core.database import SessionDep
 from core.models import (
     Client,
     ClientCreate,
@@ -97,8 +94,7 @@ def read_clients(
         raise  # Re-raise HTTP exceptions from parse_query_params
     except Exception as e:
         logger.error(f"Error fetching clients: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Failed to retrieve clients")
+        raise InternalErrorException("Failed to retrieve clients")
 
 
 @router.post("",
@@ -114,8 +110,7 @@ def create_client(session: SessionDep, current_user: CurrentUser,
     existing_client = session.exec(stmt).one_or_none()
     if existing_client:
         logger.error(f"Client with phone {client_in.phone} already exists")
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail="Client already exists")
+        raise ConflictException("Client already exists")
     try:
         client = Client(**client_in.model_dump(exclude_unset=True))
 
@@ -129,8 +124,7 @@ def create_client(session: SessionDep, current_user: CurrentUser,
     except Exception as e:
         session.rollback()
         logger.error(f"Error creating client: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Failed to create client")
+        raise InternalErrorException("Failed to create client")
 
 
 @router.get("/{client_id}",
@@ -143,8 +137,7 @@ def get_client_by_id(session: SessionDep, current_user: CurrentUser,
     logger.debug(f"User {current_user.username} fetching client {client_id}")
     client = session.get(Client, client_id)
     if not client:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail=f"Client with ID {client_id} not found")
+        raise NotFoundException(f"Client with ID {client_id} not found")
 
     logger.info(f"Client {client_id} retrieved successfully")
     return transform_client_to_public(client)
@@ -163,15 +156,13 @@ def update_client(session: SessionDep, current_user: CurrentUser,
     client = session.get(Client, client_id)
     if not client:
         logger.error(f"Client {client_id} not found")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail="Client not found")
+        raise NotFoundException("Client not found")
 
     # Validate update data
     update_data = client_in.model_dump(exclude_unset=True)
     if not update_data:
-        logger.error(f"No data provided for update")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="No data provided for update")
+        logger.error("No data provided for update")
+        raise BadRequestException("No data provided for update")
     try:
         # Apply updates
         for field, value in update_data.items():
@@ -189,8 +180,7 @@ def update_client(session: SessionDep, current_user: CurrentUser,
     except Exception as e:
         session.rollback()
         logger.error(f"Error updating client {id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Failed to update client")
+        raise InternalErrorException("Failed to update client")
 
 
 @router.delete("/{client_id}",
@@ -207,8 +197,7 @@ def delete_client(session: SessionDep, current_user: CurrentUser,
     client = session.get(Client, client_id)
     if not client:
         logger.warning(f"Client not found for deletion: {client_id}")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail="Client not found")
+        raise NotFoundException("Client not found")
 
     # Check if client has any orders
     stmt = select(func.count()).select_from(Order)
@@ -217,8 +206,7 @@ def delete_client(session: SessionDep, current_user: CurrentUser,
     if active_orders_count > 0:
         logger.warning(
             f"Client {client.id} has active orders and cannot be deleted")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="Cannot delete client: it has active orders")
+        raise BadRequestException("Cannot delete client: it has active orders")
 
     try:
         session.delete(client)
@@ -232,5 +220,4 @@ def delete_client(session: SessionDep, current_user: CurrentUser,
     except Exception as e:
         session.rollback()
         logger.error(f"Failed to delete client {client_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Failed to delete client")
+        raise InternalErrorException("Failed to delete client")

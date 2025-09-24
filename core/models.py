@@ -265,7 +265,6 @@ class ClientBase(SQLModel):
 
 class ClientCreate(ClientBase):
     discount: Optional[int] = Field(default=None, ge=0, le=100)
-    pass
 
 
 class ClientUpdate(SQLModel):

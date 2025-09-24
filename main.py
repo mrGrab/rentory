@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app
 app = FastAPI(title="Rentory",
               version=settings.VERSION,
-              openapi_url=f"/api/openapi.json",
+              openapi_url="/api/openapi.json",
               docs_url="/docs",
               redoc_url="/redoc",
               lifespan=lifespan,

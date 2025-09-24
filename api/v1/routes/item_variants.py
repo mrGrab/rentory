@@ -1,17 +1,15 @@
 from uuid import UUID
 from typing import List
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Query, Response
 from sqlmodel import select
+
+# --- Project Imports ---
 from core.logger import logger
-from core.dependencies import SessionDep, CurrentUser
-from core.database import (
-    parse_query_params,
-    calculate_pagination,
-    apply_sorting,
-    get_total_count,
-    set_pagination_headers,
-)
+from core.query_utils import *
+from core.exceptions import *
+from core.dependencies import CurrentUser
+from core.database import SessionDep
 from core.models import (
     ItemVariant,
     ItemVariantPublic,
@@ -87,8 +85,7 @@ async def read_variants(
 
     except Exception as e:
         logger.error(f"Error fetching variants: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Failed to retrieve variants")
+        raise InternalErrorException("Failed to retrieve variants")
 
 
 @router.get("/{variant_id}",
@@ -103,8 +100,7 @@ def read_variant(session: SessionDep, current_user: CurrentUser,
     variant = session.get(ItemVariant, variant_id)
     if not variant:
         logger.warning(f"Item variant not found: {variant_id}")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail="Item variant not found")
+        raise NotFoundException("Item variant not found")
 
     logger.info(f"Item variant retrieved: {variant.id}")
     return ItemVariantPublic.model_validate(variant)
@@ -122,14 +118,13 @@ def update_variant(session: SessionDep, current_user: CurrentUser,
     variant = session.get(ItemVariant, variant_id)
     if not variant:
         logger.warning(f"Variant with ID {variant_id} not found")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail="Item variant not found")
+        raise NotFoundException("Item variant not found")
+
     # Validate update data
     update_data = variant_in.model_dump(exclude_unset=True)
     if not update_data:
         logger.info(f"No changes provided for variant with ID: {id}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="No data provided for update")
+        raise BadRequestException("No data provided for update")
     try:
         # Apply updates
         for field, value in update_data.items():
@@ -150,5 +145,4 @@ def update_variant(session: SessionDep, current_user: CurrentUser,
     except Exception as e:
         session.rollback()
         logger.error(f"Error updating variant {variant_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Failed to update item variant")
+        raise InternalErrorException("Failed to update item variant")

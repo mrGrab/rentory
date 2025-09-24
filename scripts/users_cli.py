@@ -90,7 +90,7 @@ def create_new_user() -> None:
 def activate_user(username: str | None, user_id: UUID | None) -> None:
     """Activate an existing user by username."""
     if not username and not user_id:
-        console.print(f"[red]Username or user idshould be provided[/red]")
+        console.print("[red]Username or user id should be provided[/red]")
 
     with Session(engine) as session:
 

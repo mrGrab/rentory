@@ -1,36 +1,45 @@
 # FastAPI dependencies
+
+# --- Core Imports ---
 from typing import Annotated
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from sqlmodel import Session
 
+# --- Project Imports ---
 from core.logger import logger
-from core.database import get_session, get_user_by_username
+from core.config import settings
+from core.database import SessionDep, get_user_by_username
 from core.auth import oauth2_scheme, decode_token
 from core.models import User
+from core.exceptions import AuthenticationException, PermissionException
 
-# Type annotations for dependencies
-SessionDep = Annotated[Session, Depends(get_session)]
 TokenDep = Annotated[str, Depends(oauth2_scheme)]
 
 
+# ================================================================================
+#  Authentication & Authorization Dependencies
+# ================================================================================
 def get_current_user(session: SessionDep, token: TokenDep) -> User:
-    """Get current authenticated user"""
-    token_data = decode_token(token)
+    """
+    Dependency to decode a JWT token, validate its subject, and return the
+    corresponding active user from the database.
+    """
+    token_data = decode_token(token, settings.ACCESS_TOKEN_SECRET_KEY)
 
-    if not token_data.sub:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Invalid token: missing subject")
+    username = token_data.sub
+    if not username:
+        raise AuthenticationException("Invalid token: subject missing")
 
-    user = get_user_by_username(session, token_data.sub)
+    user = get_user_by_username(session, username)
     if not user:
-        logger.warning(f"User not found for token subject: {token_data.sub}")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="User not found")
+        logger.warning(
+            f"Authentication failed: user '{username}' from token not found.")
+        raise AuthenticationException(
+            "User associated with this token no longer exists")
 
     if not user.is_active:
-        logger.warning(f"Inactive user tried to authenticate: {user.username}")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Account is inactive")
+        logger.warning(f"Permission denied: user '{username}' is inactive.")
+        raise PermissionException("Your account is inactive")
 
     logger.debug(f"Authenticated user: {user.username}")
     return user
@@ -38,12 +47,20 @@ def get_current_user(session: SessionDep, token: TokenDep) -> User:
 
 def get_current_superuser(
         current_user: Annotated[User, Depends(get_current_user)]) -> User:
-    """Ensure current user is a superuser"""
+    """
+    Dependency that requires the current user to be a superuser.
+    Builds upon `get_current_user`.
+    """
     if not current_user.is_superuser:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Insufficient privileges")
+        logger.warning(
+            f"Permission denied: user '{current_user.username}' lacks superuser privileges."
+        )
+        raise PermissionException("This action requires superuser privileges")
     return current_user
 
 
-# Type annotation for current user dependency
+# ================================================================================
+#  Combined Dependency Annotations for API Routes
+# ================================================================================
 CurrentUser = Annotated[User, Depends(get_current_user)]
+CurrentSuperuser = Annotated[User, Depends(get_current_superuser)]
