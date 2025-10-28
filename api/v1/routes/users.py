@@ -92,7 +92,7 @@ def read_users(response: Response,
         return result
 
     except HTTPException:
-        raise  # Re-raise HTTP exceptions from parse_query_params
+        raise  # Re-raise HTTP exceptions from parse_params
     except Exception as e:
         logger.error(f"Error fetching users: {e}")
         raise InternalErrorException("Failed to retrieve users")

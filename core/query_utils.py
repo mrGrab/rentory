@@ -11,14 +11,14 @@ from core.logger import logger
 from core.exceptions import AuthenticationException
 
 
-def parse_query_params(filter_str: str, range_str: str, sort_str: str) -> tuple:
+def parse_params(filter_str: str, range_str: str, sort_str: str) -> tuple:
     """Parses and validates list query parameters from JSON strings."""
     try:
         filters = json.loads(filter_str)
         range_list = json.loads(range_str)
         sort_field, sort_order = json.loads(sort_str)
         return filters, range_list, sort_field, sort_order.upper()
-    except (json.JSONDecodeError, ValueError) as e:
+    except (json.JSONDecodeError) as e:
         raise AuthenticationException(f"Invalid query parameters format: {e}")
 
 

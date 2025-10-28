@@ -139,6 +139,7 @@ class ItemVariant(UUIDMixin, TimestampMixin, SQLModel, table=True):
                                       index=True)
     service_start_time: Optional[date] = None
     service_end_time: Optional[date] = None
+    is_active: bool = Field(default=True)
     item: "Item" = Relationship(back_populates="variants")
     prices: List["ItemPrice"] = Relationship(back_populates="variant",
                                              cascade_delete=True)
@@ -164,6 +165,7 @@ class ItemVariantQuantity(BaseModel):
 
 class ItemPriceBase(SQLModel):
     amount: int
+    deposit: int = Field(default=0, ge=0)
     price_type: Optional[str] = None
 
 
@@ -174,6 +176,7 @@ class ItemVariantBase(UUIDMixin, SQLModel):
     service_start_time: Optional[date] = None
     service_end_time: Optional[date] = None
     stock_quantity: int = Field(default=0, ge=0)
+    is_active: bool = Field(default=True)
     prices: List[ItemPriceBase] = []
 
 

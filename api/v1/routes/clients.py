@@ -96,7 +96,7 @@ def read_clients(
 
         return result
     except HTTPException:
-        raise  # Re-raise HTTP exceptions from parse_query_params
+        raise  # Re-raise HTTP exceptions from parse_params
     except Exception as e:
         logger.error(f"Error fetching clients: {e}")
         raise InternalErrorException("Failed to retrieve clients")
