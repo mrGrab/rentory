@@ -1,15 +1,14 @@
 # Core database functionality
-import json
 import secrets
-from typing import Generator, List, Annotated
-from fastapi import HTTPException, Response, status, Depends
+from typing import Generator, Annotated
+from fastapi import Depends
 from sqlmodel import Session, SQLModel, create_engine, select, func
 from argon2 import PasswordHasher
 
 # --- Project Imports ---
 from core.config import settings
 from core.logger import logger
-from core.models import User, UserCreate
+from models.user import User, UserCreate
 from core.exceptions import InternalErrorException
 
 engine = create_engine(settings.database_url, echo=False)
@@ -22,7 +21,7 @@ def create_db_and_tables():
 
 # --- Session Management ---
 def get_session() -> Generator[Session, None, None]:
-    """Dependency to get a new database session for each request."""
+    """Dependency to get a new database session for each request"""
     with Session(engine) as session:
         yield session
 
@@ -36,19 +35,19 @@ def hash_password(password: str) -> str:
 
 # User database operations
 def get_user_by_username(session: Session, username: str) -> User | None:
-    """Retrieves a user from the database by their username."""
+    """Retrieves a user from the database by their username"""
     stmt = select(User).where(User.username == username)
     return session.exec(stmt).first()
 
 
 def get_user_by_email(session: Session, email: str) -> User | None:
-    """Retrieves a user from the database by their email address."""
+    """Retrieves a user from the database by their email address"""
     stmt = select(User).where(User.email == email)
     return session.exec(stmt).first()
 
 
 def create_user(session: Session, user_in: UserCreate) -> User:
-    """Creates a new user in the database."""
+    """Creates a new user in the database"""
     logger.debug(f"Creating user {user_in.username}")
 
     password_to_hash = user_in.password or secrets.token_urlsafe(16)
@@ -69,3 +68,9 @@ def create_user(session: Session, user_in: UserCreate) -> User:
         logger.error(f"Error creating user '{user_in.username}': {e}")
         raise InternalErrorException(
             "An unexpected error occurred while creating the user.")
+
+
+def get_total_count(session: Session, stmt) -> int:
+    """Executes a count query to get the total number of records"""
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    return session.exec(count_stmt).one()

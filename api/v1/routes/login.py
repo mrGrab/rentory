@@ -1,18 +1,17 @@
-from datetime import timedelta
 from typing import Annotated
-from fastapi import Depends, APIRouter, HTTPException, status, Request
+from fastapi import Depends, APIRouter, Request
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
-from authlib.integrations.starlette_client import OAuth
 
 # --- Project Imports ---
 from core.config import settings
 from core.logger import logger
-from core.models import Token, UserCreate, User
 from core.dependencies import CurrentUser
 from core.database import SessionDep, get_user_by_username
 from core.auth import auth_service, authenticate_user, decode_token
 from core.exceptions import AuthenticationException
+from models.auth import Token
+from models.user import UserCreate
 
 router = APIRouter(tags=["Authentication"])
 

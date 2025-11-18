@@ -1,129 +1,83 @@
 # coding: UTF-8
-import uuid
-from sqlmodel import select
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from uuid import UUID
+from fastapi import APIRouter, Depends, Query, Response, status
 
 # --- Project Imports ---
-import core.query_utils as qp
+from core.query_utils import parse_params, calculate_pagination, set_pagination_headers
 from core.logger import logger
-from core.models import UserCreate, UserPublic, User, UserFilters
-from core.dependencies import CurrentUser, get_current_superuser
-from core.database import (
-    SessionDep,
-    create_user,
-    get_user_by_username,
-    get_user_by_email,
-)
-from core.exceptions import (
-    InternalErrorException,
-    NotFoundException,
-    ConflictException,
-)
+from core.dependencies import CurrentUser
+from core.database import SessionDep
+from core.exceptions import NotFoundException
+from models.user import UserCreate, UserPublic, User, UserFilters
+from services.user_service import UserService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-
-def check_user_exists(session: SessionDep, username: str, email: str) -> bool:
-    """Check if user already exists by username or email"""
-    if get_user_by_username(session, username):
-        return True
-    if get_user_by_email(session, email):
-        return True
-    return False
+# ---------- Helper Functions ----------
 
 
-def apply_filters(stmt, filters: UserFilters):
-    """Apply user filters to the query statement"""
-    if filters.id:
-        if isinstance(filters.id, list):
-            stmt = stmt.where(User.id.in_(filters.id))
-        else:
-            stmt = stmt.where(User.id.contains(filters.id))
+def get_user_service(session: SessionDep) -> UserService:
+    """Dependency to get UserService instance"""
+    return UserService(session)
 
-    if filters.is_external:
-        stmt = stmt.where(User.is_external == True)
 
-    if filters.is_active:
-        stmt = stmt.where(User.is_active == True)
+def get_user_or_404(
+    user_id: UUID, service: UserService = Depends(get_user_service)) -> User:
+    """Dependency to retrieve a user by ID or raise NotFoundException"""
+    user = service.get_by_id(user_id)
+    if not user:
+        logger.warning(f"User not found: {user_id}")
+        raise NotFoundException(f"User with ID {user_id} not found")
+    return user
 
-    if filters.is_superuser:
-        stmt = stmt.where(User.is_superuser == True)
 
-    return stmt
+# ---------- Routes ----------
 
 
 @router.get("",
             response_model=list[UserPublic],
             summary="List all users",
-            description="Retrieve a paginated list of all users",
-            dependencies=[Depends(get_current_superuser)])
-def read_users(response: Response,
-               session: SessionDep,
+            description="Retrieve a paginated list of all users")
+def list_users(response: Response,
+               current_user: CurrentUser,
+               service: UserService = Depends(get_user_service),
                filter_: str = Query("{}", alias="filter"),
                range_: str = Query("[0, 500]", alias="range"),
                sort: str = Query('["id","DESC"]', alias="sort")):
     """List users with filtering, sorting, and pagination"""
+    logger.debug(f"User {current_user.username} listing users")
 
-    try:
-        # Parse query parameters
-        filter_dict, range_list, sort_field, sort_order = qp.parse_params(
-            filter_, range_, sort)
+    params = parse_params(filter_, range_, sort)
+    filters = UserFilters(**params.filters)
+    offset, limit = calculate_pagination(params.range_list)
 
-        # Build filters
-        filters = UserFilters(**filter_dict)
-        offset, limit = qp.calculate_pagination(range_list)
+    users, total = service.get_users(filters=filters,
+                                     offset=offset,
+                                     limit=limit,
+                                     sort_field=params.sort_field,
+                                     sort_order=params.sort_order)
 
-        # Build query
-        stmt = select(User)
-        stmt = apply_filters(stmt, filters)
-        stmt = qp.apply_sorting(stmt, User, sort_field, sort_order)
+    result = [UserPublic.model_validate(user) for user in users]
+    set_pagination_headers(response, offset, len(result), total)
 
-        # Get total count before pagination
-        total = qp.get_total_count(session, stmt)
-
-        # Apply pagination and execute
-        stmt = stmt.offset(offset).limit(limit)
-        users = session.exec(stmt).all()
-
-        result = [UserPublic.model_validate(user) for user in users]
-        qp.set_pagination_headers(response, offset, len(result), total)
-
-        logger.info(f"Fetched {len(result)} users out of {total} total")
-        return result
-
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions from parse_params
-    except Exception as e:
-        logger.error(f"Error fetching users: {e}")
-        raise InternalErrorException("Failed to retrieve users")
+    logger.info(f"Fetched {len(result)} users out of {total} total")
+    return result
 
 
 @router.post("",
              response_model=UserPublic,
              status_code=status.HTTP_201_CREATED,
              summary="Create a new user",
-             description="Register a new user account",
-             dependencies=[Depends(get_current_superuser)])
-def create_new_user(session: SessionDep, user_in: UserCreate) -> UserPublic:
+             description="Register a new user account")
+def create_user(user_in: UserCreate,
+                current_user: CurrentUser,
+                service: UserService = Depends(get_user_service)):
     """Create a new user account"""
-    logger.debug(f"Creating new user: {user_in.username}")
+    logger.debug(f"User {current_user.username} creating user")
 
-    # Check if user already exists
-    if check_user_exists(session, user_in.username, user_in.email):
-        logger.warning(
-            f"User creation failed - already exists: {user_in.username}")
-        raise ConflictException("User already exists")
-
-    # Create the user
-    try:
-        user = create_user(session, user_in)
-        logger.info(f"Successfully created user: {user.username}")
-        return UserPublic.model_validate(user)
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions from create_user
-    except Exception as e:
-        logger.error(f"Unexpected error creating user {user_in.username}: {e}")
-        raise InternalErrorException("Failed to create user account")
+    user = service.create_user(user_in)
+    logger.info(f"User {current_user.username} created user {user.id}")
+    return UserPublic.model_validate(user)
 
 
 @router.get("/me",
@@ -139,17 +93,9 @@ def read_current_user(current_user: CurrentUser) -> UserPublic:
 @router.get("/{user_id}",
             response_model=UserPublic,
             summary="Get user by ID",
-            description="Retrieve a user's profile by their ID",
-            dependencies=[Depends(get_current_superuser)])
-def read_user_by_id(user_id: uuid.UUID, session: SessionDep) -> UserPublic:
+            description="Retrieve a user's profile by their ID")
+def read_user_by_id(current_user: CurrentUser,
+                    user: User = Depends(get_user_or_404)):
     """Get a specific user by ID"""
-    logger.debug(f"Fetching user {user_id}")
-
-    # Get the user
-    user = session.get(User, user_id)
-    if not user:
-        logger.warning(f"User not found: {user_id}")
-        raise NotFoundException("User not found")
-
-    logger.debug(f"Successfully retrieved user: {user.username}")
+    logger.info(f"User {current_user.username} retrieved user {user.id}")
     return UserPublic.model_validate(user)

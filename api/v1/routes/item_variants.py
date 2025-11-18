@@ -1,152 +1,104 @@
 from uuid import UUID
 from typing import List
-from datetime import datetime, timezone
-from fastapi import APIRouter, Query, Response
-from sqlmodel import select
+from fastapi import APIRouter, Query, Response, Depends
 
 # --- Project Imports ---
-import core.query_utils as qp
 from core.logger import logger
 from core.dependencies import CurrentUser
 from core.database import SessionDep
-from core.exceptions import (
-    InternalErrorException,
-    NotFoundException,
-    BadRequestException,
-)
-from core.models import (
+from core.exceptions import NotFoundException
+from services.item_variant_service import ItemVariantService
+from core.query_utils import parse_params, calculate_pagination, set_pagination_headers
+from models.item_variant import (
     ItemVariant,
     ItemVariantPublic,
     ItemVariantFilters,
     ItemVariantUpdate,
 )
 
-router = APIRouter(prefix="/variants", tags=["Items"])
+router = APIRouter(prefix="/variants", tags=["Item Variants"])
+
+# ---------- Helper Functions ----------
 
 
-def apply_filters(stmt, filters: ItemVariantFilters):
-    """Apply filters to query statement"""
-    if filters.id:
-        stmt = stmt.where(ItemVariant.id.in_(filters.id))
-    if filters.item_id:
-        stmt = stmt.where(ItemVariant.item_id.in_(filters.item_id))
-    if filters.color:
-        stmt = stmt.where(ItemVariant.color == filters.color)
-    if filters.size:
-        stmt = stmt.where(ItemVariant.size == filters.size)
-    if filters.status:
-        stmt = stmt.where(ItemVariant.status.in_(filters.status))
-    if filters.service_end_time:
-        stmt = stmt.where(
-            ItemVariant.service_end_time == filters.service_end_time)
-    if filters.service_start_time:
-        stmt = stmt.where(
-            ItemVariant.service_start_time == filters.service_start_time)
+def get_variant_service(session: SessionDep) -> ItemVariantService:
+    """Dependency to get ItemVariantService instance"""
+    return ItemVariantService(session)
 
-    return stmt.distinct()
+
+def get_variant_or_404(
+    variant_id: UUID,
+    service: ItemVariantService = Depends(get_variant_service)
+) -> ItemVariant:
+    """Dependency to retrieve a variant by ID or raise NotFoundException"""
+    variant = service.get_by_id(variant_id)
+    if not variant:
+        logger.warning(f"Item variant not found: {variant_id}")
+        raise NotFoundException(f"Item variant with ID {variant_id} not found")
+    return variant
+
+
+# ---------- Routes ----------
 
 
 @router.get("",
             response_model=List[ItemVariantPublic],
             summary="List of item variants",
-            description="Retrieve a list of all item variants.")
-async def read_variants(
-    response: Response,
-    session: SessionDep,
-    current_user: CurrentUser,
-    filter_: str = Query("{}", alias="filter"),
-    range_: str = Query("[0, 500]", alias="range"),
-    sort: str = Query('["id","ASC"]', alias="sort")
-) -> List[ItemVariantPublic]:
-    try:
-        # Parse inputs
-        filter_dict, range_list, sort_field, sort_order = qp.parse_params(
-            filter_, range_, sort)
+            description="Retrieve a list of all item variants")
+def list_variants(response: Response,
+                  current_user: CurrentUser,
+                  service: ItemVariantService = Depends(get_variant_service),
+                  filter_: str = Query("{}", alias="filter"),
+                  range_: str = Query("[0, 500]", alias="range"),
+                  sort: str = Query('["id","ASC"]', alias="sort")):
+    logger.debug(f"User {current_user.username} listing variants")
 
-        # Build filters and pagination
-        filters = ItemVariantFilters(**filter_dict)
-        offset, limit = qp.calculate_pagination(range_list)
+    # Parse query parameters
+    params = parse_params(filter_, range_, sort)
+    filters = ItemVariantFilters(**params.filters)
+    offset, limit = calculate_pagination(params.range_list)
 
-        # Build base query
-        stmt = select(ItemVariant)
-        stmt = apply_filters(stmt, filters)
-        stmt = qp.apply_sorting(stmt, ItemVariant, sort_field, sort_order)
+    # Fetch variants
+    variants, total = service.get_variants(filters=filters,
+                                           offset=offset,
+                                           limit=limit,
+                                           sort_field=params.sort_field,
+                                           sort_order=params.sort_order)
 
-        # Get total count before pagination
-        total = qp.get_total_count(session, stmt)
+    # Set pagination headers
+    set_pagination_headers(response=response,
+                           count=len(variants),
+                           total=total,
+                           offset=offset,
+                           resource_name="variants")
 
-        # Apply pagination
-        stmt = stmt.offset(offset).limit(limit)
-        variants = session.exec(stmt).all()
-
-        result = [ItemVariantPublic.model_validate(v) for v in variants]
-
-        qp.set_pagination_headers(response, offset, len(result), total)
-        logger.info(
-            f"Fetched {len(variants)} variants out of {total} total for user {current_user.username}"
-        )
-        return result
-
-    except Exception as e:
-        logger.error(f"Error fetching variants: {e}")
-        raise InternalErrorException("Failed to retrieve variants")
+    logger.info(
+        f"User {current_user.username} retrieved {len(variants)}/{total} variants"
+    )
+    return variants
 
 
 @router.get("/{variant_id}",
             response_model=ItemVariantPublic,
             summary="Get item variant by ID",
-            description="Fetch a single itemvariant  by its unique ID.")
-def read_variant(session: SessionDep, current_user: CurrentUser,
-                 variant_id: UUID) -> ItemVariantPublic:
-    logger.debug(
-        f"User {current_user.username} fetching item variant: {variant_id}")
-
-    variant = session.get(ItemVariant, variant_id)
-    if not variant:
-        logger.warning(f"Item variant not found: {variant_id}")
-        raise NotFoundException("Item variant not found")
-
-    logger.info(f"Item variant retrieved: {variant.id}")
-    return ItemVariantPublic.model_validate(variant)
+            description="Retrieve a specific item variant by its UUID")
+def get_variant(current_user: CurrentUser,
+                variant: ItemVariant = Depends(get_variant_or_404)):
+    logger.info(f"User {current_user.username} retrieved variant {variant.id}")
+    return variant
 
 
 @router.put("/{variant_id}",
             response_model=ItemVariantPublic,
             summary="Update item variant",
-            description="Update an existing variant by ID.")
-def update_variant(session: SessionDep, current_user: CurrentUser,
-                   variant_id: UUID,
-                   variant_in: ItemVariantUpdate) -> ItemVariantPublic:
-    logger.info(f"User {current_user.username} updating variant {variant_id}")
+            description="Update an existing variant by ID")
+def update_variant(current_user: CurrentUser,
+                   variant_in: ItemVariantUpdate,
+                   variant: ItemVariant = Depends(get_variant_or_404),
+                   service: ItemVariantService = Depends(get_variant_service)):
+    logger.info(f"User {current_user.username} updating variant {variant.id}")
 
-    variant = session.get(ItemVariant, variant_id)
-    if not variant:
-        logger.warning(f"Variant with ID {variant_id} not found")
-        raise NotFoundException("Item variant not found")
+    updated_variant = service.update(variant, variant_in)
 
-    # Validate update data
-    update_data = variant_in.model_dump(exclude_unset=True)
-    if not update_data:
-        logger.info(f"No changes provided for variant with ID: {id}")
-        raise BadRequestException("No data provided for update")
-    try:
-        # Apply updates
-        for field, value in update_data.items():
-            setattr(variant, field, value)
-
-        variant.updated_at = datetime.now(timezone.utc)
-        if variant.status == "available":
-            variant.service_start_time = None
-            variant.service_end_time = None
-
-        session.add(variant)
-        session.commit()
-        session.refresh(variant)
-
-        logger.info(f"Updated variant: {variant_id}")
-        return ItemVariantPublic.model_validate(variant)
-
-    except Exception as e:
-        session.rollback()
-        logger.error(f"Error updating variant {variant_id}: {e}")
-        raise InternalErrorException("Failed to update item variant")
+    logger.info(f"User {current_user.username} updated variant {variant.id}")
+    return updated_variant

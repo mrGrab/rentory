@@ -3,14 +3,13 @@
 # --- Core Imports ---
 from typing import Annotated
 from fastapi import Depends
-from sqlmodel import Session
 
 # --- Project Imports ---
 from core.logger import logger
 from core.config import settings
 from core.database import SessionDep, get_user_by_username
 from core.auth import oauth2_scheme, decode_token
-from core.models import User
+from models.user import User
 from core.exceptions import AuthenticationException, PermissionException
 
 TokenDep = Annotated[str, Depends(oauth2_scheme)]

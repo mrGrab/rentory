@@ -24,6 +24,6 @@ router.include_router(upload.router)
 
 @router.get("/",
             summary="API v1 root endpoint",
-            description="Returns a welcome message for the API v1.")
+            description="Returns a welcome message for the API v1")
 async def root():
     return JSONResponse(content={"message": "Welcome to API version 1"})

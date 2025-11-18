@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT_DIR))
 from core.database import engine, create_user, get_user_by_username, get_user_by_email
-from core.models import User, UserCreate
+from models.user import User, UserCreate
 
 console = Console()
 

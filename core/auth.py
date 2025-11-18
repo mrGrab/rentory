@@ -11,9 +11,10 @@ from authlib.integrations.starlette_client import OAuth
 # --- Project Imports ---
 from core.logger import logger
 from core.config import settings
-from core.models import User, UserCreate, Token, TokenPayload
 from core.database import ph, SessionDep, get_user_by_username, get_user_by_email, create_user
 from core.exceptions import AuthenticationException, ConflictException, InternalErrorException
+from models.user import User, UserCreate
+from models.auth import Token, TokenPayload
 
 # =====================================================================================
 #  Low-Level Auth Primitives
@@ -23,7 +24,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/login")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verifies a plain password against an Argon2 hash."""
+    """Verifies a plain password against an Argon2 hash"""
     try:
         return ph.verify(hashed_password, plain_password)
     except (argon2_exceptions.VerifyMismatchError,
@@ -136,7 +137,8 @@ class AuthService:
         redirect_uri = request.url_for("google_callback")
         logger.debug(
             f"Starting Google OAuth flow with redirect: {redirect_uri}")
-        return await self.oauth.google.authorize_redirect(request, redirect_uri)
+        return await self.oauth.google.authorize_redirect(
+            request, redirect_uri)
 
     async def handle_google_callback(self, request: Request,
                                      session: SessionDep) -> User:
