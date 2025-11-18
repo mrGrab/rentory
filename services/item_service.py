@@ -78,7 +78,7 @@ class ItemService:
         Returns:
             Tuple of (list of items, total count)
         """
-        logger.debug(f"Fetching items with filters")
+        logger.debug("Fetching items with filters")
 
         stmt = select(Item)
         stmt = self._apply_filters(stmt, filters)
@@ -127,7 +127,7 @@ class ItemService:
         existing = self.session.exec(stmt).first()
         if existing:
             logger.warning(f"Item with title '{item_in.title}' already exists")
-            raise ConflictException(f"Item with this title already exists")
+            raise ConflictException("Item with this title already exists")
 
         # Create item
         item_data = item_in.model_dump(exclude={"variants"})

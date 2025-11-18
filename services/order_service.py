@@ -2,6 +2,7 @@ from uuid import UUID
 from datetime import datetime, timezone, date
 from typing import List, Optional
 from sqlmodel import select, func
+from sqlalchemy.sql.expression import Select
 
 # --- Project Imports ---
 from core.logger import logger
@@ -21,60 +22,72 @@ class OrderService:
     def __init__(self, session):
         self.session = session
 
+    def _filter_by_archive_status(self, stmt: Select,
+                                  is_archived: bool | None) -> Select:
+        """Filters by archive status (defaulting to False if None)."""
+        if is_archived is not None:
+            return stmt.where(Order.is_archived == is_archived)
+        return stmt.where(Order.is_archived == False)
+
+    def _filter_by_phone(self, stmt: Select, phone: str | None) -> Select:
+        """Filters by client phone number."""
+        if phone:
+            return stmt.join(Client).where(Client.phone.ilike(f"%{phone}%"))
+        return stmt
+
+    def _filter_by_ids(self, stmt: Select,
+                       order_ids: int | List[int] | None) -> Select:
+        """Filters by one or multiple order IDs."""
+        if not order_ids:
+            return stmt
+        if isinstance(order_ids, list):
+            return stmt.where(Order.id.in_(order_ids))
+        return stmt.where(Order.id == order_ids)
+
+    def _filter_by_time_range(self, stmt: Select, start: date | None,
+                              end: date | None) -> Select:
+        """Filters orders overlapping with a specific time range."""
+        if start and end:
+            return stmt.where(Order.end_time >= start, Order.start_time <= end)
+        if end:
+            return stmt.where(Order.end_time == end)
+        if start:
+            return stmt.where(Order.start_time == start)
+        return stmt
+
+    def _filter_by_item_ids(self, stmt: Select,
+                            item_ids: List[UUID] | None) -> Select:
+        """Filters orders containing specific items."""
+        if item_ids:
+            stmt = stmt.join(Order.item_links).join(OrderItemLink.item_variant)
+            return stmt.where(ItemVariant.item_id.in_(item_ids))
+        return stmt
+
     def _apply_filters(self, stmt, filters: OrderFilters):
         """Apply filters to order query"""
 
-        # By default, exclude archived orders
-        if filters.is_archived is not None:
-            stmt = stmt.where(Order.is_archived == filters.is_archived)
-        else:
-            stmt = stmt.where(Order.is_archived == False)
+        # Base Filters (Always logic)
+        stmt = self._filter_by_archive_status(stmt, filters.is_archived)
 
-        # Phone filter (requires join with Client)
-        if filters.phone:
-            stmt = stmt.join(Client)
-            stmt = stmt.where(Client.phone.ilike(f"%{filters.phone}%"))
-
-        # Order ID filter
-        if filters.id:
-            if isinstance(filters.id, list):
-                stmt = stmt.where(Order.id.in_(filters.id))
-            else:
-                stmt = stmt.where(Order.id == filters.id)
-
-        # Client ID filter
+        # Simple Equality Filters
         if filters.client_id:
             stmt = stmt.where(Order.client_id == filters.client_id)
-
-        # Time range filters (handle overlapping ranges)
-        if filters.start_time and filters.end_time:
-            # Find orders that overlap with the filter time range
-            stmt = stmt.where(Order.end_time >= filters.start_time,
-                              Order.start_time <= filters.end_time)
-        elif filters.end_time:
-            stmt = stmt.where(Order.end_time == filters.end_time)
-        elif filters.start_time:
-            stmt = stmt.where(Order.start_time == filters.start_time)
-
-        # Tag filter
-        if filters.tag:
-            stmt = stmt.where(Order.tags.contains([filters.tag]))
-
-        # Status filter
         if filters.status:
             stmt = stmt.where(Order.status == filters.status)
-
-        # Item IDs filter (requires joins)
-        if filters.item_ids:
-            stmt = stmt.join(Order.item_links).join(OrderItemLink.item_variant)
-            stmt = stmt.where(ItemVariant.item_id.in_(filters.item_ids))
-
-        # Pickup type filter (JSON field query)
         if filters.pickup_type:
             stmt = stmt.where(
                 Order.delivery_info["pickup_type"] == filters.pickup_type)
 
-        # Created date
+        # Complex Filters
+        stmt = self._filter_by_ids(stmt, filters.id)
+        stmt = self._filter_by_phone(stmt, filters.phone)
+        stmt = self._filter_by_time_range(stmt, filters.start_time,
+                                          filters.end_time)
+        stmt = self._filter_by_item_ids(stmt, filters.item_ids)
+
+        # Remaining Specific Filters
+        if filters.tag:
+            stmt = stmt.where(Order.tags.contains([filters.tag]))
         if filters.created_at:
             stmt = stmt.where(
                 func.date(Order.created_at) == filters.created_at.date())
@@ -88,7 +101,7 @@ class OrderService:
                    sort_field: str = "created_at",
                    sort_order: str = "DESC") -> tuple[List[Order], int]:
         """Get filtered and paginated orders with total count"""
-        logger.debug(f"Fetching orders")
+        logger.debug("Fetching orders")
 
         stmt = select(Order)
         stmt = self._apply_filters(stmt, filters)

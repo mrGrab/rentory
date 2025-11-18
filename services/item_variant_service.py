@@ -52,7 +52,7 @@ class ItemVariantService:
                      sort_field: str = "id",
                      sort_order: str = "ASC") -> tuple[List[ItemVariant], int]:
         """Get filtered and paginated variants with total count"""
-        logger.debug(f"Fetching variants")
+        logger.debug("Fetching variants")
 
         stmt = select(ItemVariant)
         stmt = self._apply_filters(stmt, filters)

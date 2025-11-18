@@ -23,7 +23,7 @@ def parse_params(filter_str: str, range_str: str,
                                range_list=range_list,
                                sort_field=sort_field,
                                sort_order=sort_order.upper())
-    except (json.JSONDecodeError, ValueError) as e:
+    except (ValueError) as e:
         raise BadRequestException(f"Invalid query parameters format: {e}")
 
 

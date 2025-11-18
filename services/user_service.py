@@ -47,7 +47,7 @@ class UserService:
                   sort_field: str = "id",
                   sort_order: str = "ASC") -> tuple[List[User], int]:
         """Get filtered and paginated users with total count"""
-        logger.debug(f"Fetching users")
+        logger.debug("Fetching users")
 
         stmt = select(User)
         stmt = self._apply_filters(stmt, filters)

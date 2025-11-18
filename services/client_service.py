@@ -75,7 +75,7 @@ class ClientService:
         if existing:
             logger.warning(
                 f"Client with phone {client_in.phone} already exists")
-            raise ConflictException(f"Client with such phone already exists")
+            raise ConflictException("Client with such phone already exists")
 
         client = Client(**client_in.model_dump(exclude_unset=True))
         self.session.add(client)

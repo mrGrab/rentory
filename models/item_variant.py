@@ -74,7 +74,7 @@ class ItemVariantBase(SQLModel):
 
 class ItemVariantCreate(ItemVariantBase):
     """Schema for creating a new variant"""
-    item_id: UUID = None
+    item_id: UUID
 
 
 class ItemVariantUpdate(SQLModel):
