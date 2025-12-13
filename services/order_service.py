@@ -3,9 +3,9 @@ from datetime import datetime, timezone, date
 from typing import List, Optional
 from sqlmodel import select, func
 from sqlalchemy.sql.expression import Select
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from weasyprint import HTML
-from rich import print
+
 # --- Project Imports ---
 from core.logger import logger
 from core.query_utils import apply_sorting
@@ -359,7 +359,8 @@ class OrderService:
         invoice_data["amount_due"] = order.price - invoice_data["total_paid"]
 
         # Render HTML from template
-        env = Environment(loader=FileSystemLoader("templates"))
+        env = Environment(loader=FileSystemLoader("templates"),
+                          autoescape=select_autoescape(['html', 'xml']))
         template = env.get_template("invoice.html")
         html_content = template.render(**invoice_data)
 
