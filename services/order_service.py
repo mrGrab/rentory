@@ -3,7 +3,9 @@ from datetime import datetime, timezone, date
 from typing import List, Optional
 from sqlmodel import select, func
 from sqlalchemy.sql.expression import Select
-
+from jinja2 import Environment, FileSystemLoader
+from weasyprint import HTML
+from rich import print
 # --- Project Imports ---
 from core.logger import logger
 from core.query_utils import apply_sorting
@@ -193,7 +195,7 @@ class OrderService:
         logger.debug(f"Creating order for client {order_in.client_id}")
 
         # Validate dates
-        if order_in.start_time >= order_in.end_time:
+        if order_in.start_time > order_in.end_time:
             raise BadRequestException("Start time must be before end time")
 
         # Validate item availability
@@ -246,7 +248,7 @@ class OrderService:
         end_time = order_in.end_time if order_in.end_time else order.end_time
 
         # Validate dates
-        if start_time >= end_time:
+        if start_time > end_time:
             raise BadRequestException("Start time must be before end time")
 
         # Validate items if provided
@@ -330,3 +332,39 @@ class OrderService:
 
         logger.debug(f"Found {len(orders)} orders with status {status}")
         return orders
+
+    def generate_invoice_pdf(self, order: Order) -> bytes:
+        """Generate PDF invoice from order data"""
+        logger.debug(f"Generating invoice PDF for order {order.id}")
+
+        # Prepare invoice data
+
+        items = [{
+            "title": link.item_variant.item.title,
+            "image_url": link.item_variant.item.image_url,
+            "size": link.item_variant.size,
+            "color": link.item_variant.color,
+            "price": link.price,
+            "deposit": link.deposit
+        } for link in order.item_links]
+
+        invoice_data = {
+            "order": order,
+            "client": order.client,
+            "items": items,
+            "total_paid": sum(p.amount for p in order.payments)
+        }
+
+        # Calculate balance
+        invoice_data["amount_due"] = order.price - invoice_data["total_paid"]
+
+        # Render HTML from template
+        env = Environment(loader=FileSystemLoader("templates"))
+        template = env.get_template("invoice.html")
+        html_content = template.render(**invoice_data)
+
+        # Generate PDF
+        pdf_bytes = HTML(string=html_content).write_pdf()
+
+        logger.debug(f"Invoice PDF generated for order {order.id}")
+        return pdf_bytes

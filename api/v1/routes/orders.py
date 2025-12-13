@@ -1,5 +1,7 @@
+from io import BytesIO
 from typing import List
 from fastapi import APIRouter, Response, status, Depends, Query
+from fastapi.responses import StreamingResponse
 
 # --- Project Imports ---
 from services.order_service import OrderService
@@ -122,11 +124,34 @@ def create_order(order_in: OrderCreate,
     logger.debug(f"User {current_user.username} creating new order")
 
     if not order_in.created_by_user_id:
-        order_in.created_by_user_id == current_user.id
+        order_in.created_by_user_id = current_user.id
     order = service.create(order_in)
 
     logger.info(f"User {current_user.username} created order {order.id}")
     return to_public(order)
+
+
+@router.get("/{order_id}/invoice",
+            summary="Generate invoice PDF",
+            description="Generate and download invoice PDF for an order")
+def generate_invoice(current_user: CurrentUser,
+                     order: Order = Depends(get_order_or_404),
+                     service: OrderService = Depends(get_order_service)):
+    """Generate invoice PDF for an order"""
+    logger.debug(
+        f"User {current_user.username} generating invoice for order {order.id}"
+    )
+
+    pdf_bytes = service.generate_invoice_pdf(order)
+
+    logger.info(f"Invoice generated for order {order.id}")
+
+    return StreamingResponse(BytesIO(pdf_bytes),
+                             media_type="application/pdf",
+                             headers={
+                                 "Content-Disposition":
+                                 f"attachment; filename=invoice_{order.id}.pdf"
+                             })
 
 
 @router.get("/{order_id}",
