@@ -149,7 +149,8 @@ class OrderService:
         stmt = select(OrderItemLink.item_variant_id).join(Order)
         stmt = stmt.where(
             OrderItemLink.item_variant_id == variant_id,
-            Order.status.in_(["booked", "issued"]),
+            Order.status.in_(
+                ["booked", "booked_not_paid", "booked_paid", "issued"]),
             Order.is_archived == False,
             Order.start_time <= end_time,
             Order.end_time >= start_time,

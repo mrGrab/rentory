@@ -1,8 +1,9 @@
 from uuid import UUID
 from enum import Enum
 from datetime import datetime, date
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING, Any
 from sqlmodel import Field, SQLModel, Relationship, Column, JSON
+from pydantic import field_validator
 
 from models.common import TimestampMixin
 from models.payment import Payment, PaymentBase, PaymentPublic
@@ -12,11 +13,10 @@ if TYPE_CHECKING:
     from models.links import OrderItemLink
     from models.item_variant import ItemVariantQuantity
 
-# ---------- ENUMS ----------
-
 
 class OrderStatus(str, Enum):
-    BOOKED = "booked"  # reserved, but payment not received
+    BOOKED = "booked"  # booked
+    BOOKED_NOT_PAID = "booked_not_paid"  # booked, but not paid
     BOOKED_PAID = "booked_paid"  # reserved and payment received
     ISSUED = "issued"  # item(s) handed over to client
     RETURNED = "returned"  # item(s) returned
@@ -58,7 +58,8 @@ class OrderItemPublicInfo(SQLModel):
 
 class Order(TimestampMixin, SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    status: OrderStatus = Field(default=OrderStatus.BOOKED, index=True)
+    status: OrderStatus = Field(default=OrderStatus.BOOKED_NOT_PAID,
+                                index=True)
     client_id: UUID = Field(foreign_key="client.id", index=True)
     start_time: date = Field(index=True)
     end_time: date = Field(index=True)
@@ -83,7 +84,7 @@ class Order(TimestampMixin, SQLModel, table=True):
 
 
 class OrderBase(SQLModel):
-    status: OrderStatus = Field(default=OrderStatus.BOOKED)
+    status: OrderStatus = Field(default=OrderStatus.BOOKED_NOT_PAID)
     start_time: date
     end_time: date
     discount: int = Field(default=None, ge=0, le=100)
@@ -139,3 +140,27 @@ class OrderFilters(SQLModel):
     item_ids: Optional[List[UUID]] = None
     is_archived: Optional[bool] = None
     created_at: Optional[datetime] = None
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def parse_id_to_list(cls, value: Any) -> Optional[List[int]]:
+        if value is None or value == "":
+            return value
+
+        # Accept list of IDs directly
+        if isinstance(value, list):
+            try:
+                return [int(x) for x in value if str(x).strip() != ""]
+            except (ValueError, TypeError):
+                return [-1]
+
+        if isinstance(value, str) and "," in value:
+            value = value.split(",")
+        else:
+            value = [value]
+
+        try:
+            return [int(x) for x in value if str(x).strip() != ""]
+        except (ValueError, TypeError):
+            # Return an impossible ID like -1 so the DB finds 0 records.
+            return [-1]

@@ -27,8 +27,11 @@ class ItemService:
     def _apply_filters(self, stmt, filters: ItemFilters):
         """Applies all filters to the item query statement"""
 
-        # Always exclude archived items by default
-        stmt = stmt.where(Item.is_archived == False)
+        # Exclude archived items by default unless explicit filter is provided
+        if filters.is_archived is None:
+            stmt = stmt.where(Item.is_archived == False)
+        else:
+            stmt = stmt.where(Item.is_archived == filters.is_archived)
 
         # Join ItemVariant if any variant-specific filters are present
         if any([filters.color, filters.size, filters.variant_status]):

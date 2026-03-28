@@ -106,6 +106,7 @@ class ItemVariantFilters(SQLModel):
     status: Optional[List[ItemVariantStatus]] = None
     service_start_time: Optional[date] = None
     service_end_time: Optional[date] = None
+    is_archived: Optional[bool] = None
 
 
 class ItemVariantQuantity(SQLModel):

@@ -23,8 +23,11 @@ class ItemVariantService:
     def _apply_filters(self, stmt, filters: ItemVariantFilters):
         """Apply filters to item variant query"""
 
-        # Always exclude archived items by default
-        stmt = stmt.where(ItemVariant.is_archived == False)
+        # Exclude archived items by default (unless explicitly specified)
+        if filters.is_archived is None:
+            stmt = stmt.where(ItemVariant.is_archived == False)
+        else:
+            stmt = stmt.where(ItemVariant.is_archived == filters.is_archived)
 
         if filters.id:
             stmt = stmt.where(ItemVariant.id.in_(filters.id))
@@ -214,14 +217,23 @@ class ItemVariantService:
             return False, f"Variant {variant.id} is archived"
 
         # Check service availability (maintenance periods)
-        if variant.service_end_time and variant.service_end_time > start_time:
-            return False, f"Variant {variant.id} under maintenance until {variant.service_end_time}"
+        if variant.service_end_time:
+            service_end_date = variant.service_end_time
+            if isinstance(service_end_date, datetime):
+                service_end_date = service_end_date.date()
+
+            start_date = start_time.date() if isinstance(
+                start_time, datetime) else start_time
+
+            if service_end_date >= start_date:
+                return False, f"Variant {variant.id} under maintenance until {variant.service_end_time}"
 
         # Check for booking conflicts
         stmt = select(OrderItemLink.order_id).join(Order)
         stmt = stmt.where(
             OrderItemLink.item_variant_id == variant.id,
-            Order.status.in_(["booked", "issued"]),
+            Order.status.in_(
+                ["booked", "booked_not_paid", "booked_paid", "issued"]),
             Order.is_archived == False,
             Order.start_time <= end_time,
             Order.end_time >= start_time,

@@ -80,3 +80,4 @@ class ItemFilters(SQLModel):
     variant_status: Optional["ItemVariantStatus"] = None
     tag: Optional[str] = None
     q: Optional[str] = None
+    is_archived: Optional[bool] = None
