@@ -17,7 +17,6 @@ router = APIRouter(tags=["Authentication"])
 
 
 @router.post("/login",
-             response_model=Token,
              summary="User login",
              description="Authenticate user with username/email and password")
 def login(session: SessionDep, form_data: Annotated[OAuth2PasswordRequestForm,
@@ -39,10 +38,7 @@ def login(session: SessionDep, form_data: Annotated[OAuth2PasswordRequestForm,
     return auth_service.generate_token_pair(user.username)
 
 
-@router.post("/register",
-             response_model=Token,
-             status_code=201,
-             summary="User Registration")
+@router.post("/register", status_code=201, summary="User Registration")
 def register_user(session: SessionDep, user_data: UserCreate) -> Token:
     """Creates a new user account and returns a token pair."""
     new_user = auth_service.register_new_user(session, user_data)
@@ -50,7 +46,6 @@ def register_user(session: SessionDep, user_data: UserCreate) -> Token:
 
 
 @router.post("/refresh",
-             response_model=Token,
              summary="Refresh Access Token",
              description="Exchange refresh token for new access token")
 def refresh_access_token(session: SessionDep, refresh_token: str) -> Token:

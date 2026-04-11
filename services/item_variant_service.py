@@ -247,7 +247,6 @@ class ItemVariantService:
             stmt = stmt.where(Order.id != exclude_order_id)
         booked_quantity = self.session.exec(stmt).one()
         if booked_quantity >= variant.quantity:
-            available = variant.quantity - booked_quantity
             return False, (
                 f"Variant {variant.id} is fully booked during this period "
                 f"({booked_quantity}/{variant.quantity} units booked)")

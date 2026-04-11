@@ -16,7 +16,6 @@ def get_finance_service(session: SessionDep) -> FinanceService:
 
 @router.get(
     "/summary",
-    response_model=FinanceSummary,
     summary="Finance summary",
     description="Returns aggregated payment statistics. Superusers only.",
 )

@@ -88,7 +88,6 @@ def create_user(user_in: UserCreate, current_user: CurrentSuperuser,
 
 
 @router.get("/me",
-            response_model=UserPublic,
             summary="Get current user profile",
             description="Return the authenticated user's profile data")
 def read_current_user(current_user: CurrentUser) -> UserPublic:
