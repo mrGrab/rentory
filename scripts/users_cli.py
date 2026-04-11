@@ -31,6 +31,7 @@ from models.user import User, UserCreate
 console = Console()
 
 ERR_ONE_IDENTIFIER = "[red]Provide exactly one: --user, --email, or --id[/red]"
+ERR_USER_NOT_FOUND = "[red]User not found[/red]"
 
 
 @click.group()
@@ -212,7 +213,7 @@ def show_user(username: str | None, email: str | None,
                           email=email,
                           user_id=user_id)
         if not user:
-            console.print("[red]User not found[/red]")
+            console.print(ERR_USER_NOT_FOUND)
             return
 
         console.print(_render_user(user))
@@ -252,7 +253,7 @@ def update_user(
                           email=email,
                           user_id=user_id)
         if not user:
-            console.print("[red]User not found[/red]")
+            console.print(ERR_USER_NOT_FOUND)
             return
 
         new_username = Prompt.ask("New username",
@@ -342,7 +343,7 @@ def activate_user(
                               user_id=user_id)
 
             if not user:
-                console.print("[red]User not found[/red]")
+                console.print(ERR_USER_NOT_FOUND)
                 return
 
             user.is_active = True
@@ -390,7 +391,7 @@ def deactivate_user(
                               email=email,
                               user_id=user_id)
             if not user:
-                console.print("[red]User not found[/red]")
+                console.print(ERR_USER_NOT_FOUND)
                 return
 
             user.is_active = False
@@ -440,7 +441,7 @@ def delete_user(
                               email=email,
                               user_id=user_id)
             if not user:
-                console.print("[red]User not found[/red]")
+                console.print(ERR_USER_NOT_FOUND)
                 return
 
             if not yes and not Confirm.ask(
