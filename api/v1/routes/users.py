@@ -1,5 +1,6 @@
 # coding: UTF-8
 from uuid import UUID
+from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Response, status
 
 # --- Project Imports ---
@@ -22,7 +23,8 @@ def get_user_service(session: SessionDep) -> UserService:
 
 
 def get_user_or_404(
-    user_id: UUID, service: UserService = Depends(get_user_service)) -> User:
+        user_id: UUID, service: Annotated[UserService,
+                                          Depends(get_user_service)]) -> User:
     """Dependency to retrieve a user by ID or raise NotFoundException"""
     user = service.get_by_id(user_id)
     if not user:
@@ -43,7 +45,8 @@ def get_user_or_404(
 )
 def list_users(response: Response,
                current_user: CurrentUser,
-               service: UserService = Depends(get_user_service),
+               service: Annotated[UserService,
+                                  Depends(get_user_service)],
                filter_: str = Query("{}", alias="filter"),
                range_: str = Query("[0, 500]", alias="range"),
                sort: str = Query('["id","DESC"]', alias="sort")):
@@ -73,9 +76,9 @@ def list_users(response: Response,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new user (superuser only)",
     description="Create a new user account. Requires superuser privileges.")
-def create_user(user_in: UserCreate,
-                current_user: CurrentSuperuser,
-                service: UserService = Depends(get_user_service)):
+def create_user(user_in: UserCreate, current_user: CurrentSuperuser,
+                service: Annotated[UserService,
+                                   Depends(get_user_service)]):
     """Create a new user account"""
     logger.debug(f"User {current_user.username} creating user")
 
@@ -102,7 +105,7 @@ def read_current_user(current_user: CurrentUser) -> UserPublic:
     "Retrieve a user's profile by their ID. Available to all authenticated users."
 )
 def read_user_by_id(current_user: CurrentUser,
-                    user: User = Depends(get_user_or_404)):
+                    user: Annotated[User, Depends(get_user_or_404)]):
     """Get a specific user by ID"""
     logger.info(f"User {current_user.username} retrieved user {user.id}")
     return UserPublic.model_validate(user)
@@ -113,10 +116,10 @@ def read_user_by_id(current_user: CurrentUser,
     response_model=UserPublic,
     summary="Update user (superuser only)",
     description="Update a user's details. Requires superuser privileges.")
-def update_user(user_in: UserUpdate,
-                current_user: CurrentSuperuser,
-                service: UserService = Depends(get_user_service),
-                user: User = Depends(get_user_or_404)):
+def update_user(user_in: UserUpdate, current_user: CurrentSuperuser,
+                service: Annotated[UserService,
+                                   Depends(get_user_service)],
+                user: Annotated[User, Depends(get_user_or_404)]):
     """Update a user's details"""
     logger.debug(f"Superuser {current_user.username} updating user {user.id}")
     updated = service.update(user, user_in)
@@ -130,8 +133,9 @@ def update_user(user_in: UserUpdate,
     summary="Delete user (superuser only)",
     description="Permanently delete a user. Requires superuser privileges.")
 def delete_user(current_user: CurrentSuperuser,
-                service: UserService = Depends(get_user_service),
-                user: User = Depends(get_user_or_404)):
+                service: Annotated[UserService,
+                                   Depends(get_user_service)],
+                user: Annotated[User, Depends(get_user_or_404)]):
     """Delete a user permanently"""
     logger.debug(f"Superuser {current_user.username} deleting user {user.id}")
     service.delete(user)

@@ -1,5 +1,5 @@
 from io import BytesIO
-from typing import List
+from typing import Annotated, List
 from fastapi import APIRouter, Response, status, Depends, Query
 from fastapi.responses import StreamingResponse
 
@@ -31,8 +31,9 @@ def get_order_service(session: SessionDep) -> OrderService:
 
 
 def get_order_or_404(
-    order_id: int,
-    service: OrderService = Depends(get_order_service)) -> Order:
+        order_id: int,
+        service: Annotated[OrderService,
+                           Depends(get_order_service)]) -> Order:
     """Dependency to retrieve an order by ID or raise NotFoundException"""
     order = service.get_by_id(order_id)
     if not order:
@@ -77,7 +78,8 @@ def to_public(order: Order) -> OrderPublic:
             summary="List orders with pagination")
 def list_orders(response: Response,
                 current_user: CurrentUser,
-                service: OrderService = Depends(get_order_service),
+                service: Annotated[OrderService,
+                                   Depends(get_order_service)],
                 filter_: str = Query("{}", alias="filter"),
                 range_: str = Query("[0, 500]", alias="range"),
                 sort: str = Query('["created_at", "DESC"]', alias="sort")):
@@ -117,9 +119,9 @@ def list_orders(response: Response,
              status_code=status.HTTP_201_CREATED,
              summary="Create a new order",
              description="Create a new order and link it to item variants")
-def create_order(order_in: OrderCreate,
-                 current_user: CurrentUser,
-                 service: OrderService = Depends(get_order_service)):
+def create_order(order_in: OrderCreate, current_user: CurrentUser,
+                 service: Annotated[OrderService,
+                                    Depends(get_order_service)]):
     """Create a new order"""
     logger.debug(f"User {current_user.username} creating new order")
 
@@ -135,8 +137,9 @@ def create_order(order_in: OrderCreate,
             summary="Generate invoice PDF",
             description="Generate and download invoice PDF for an order")
 def generate_invoice(current_user: CurrentUser,
-                     order: Order = Depends(get_order_or_404),
-                     service: OrderService = Depends(get_order_service)):
+                     order: Annotated[Order, Depends(get_order_or_404)],
+                     service: Annotated[OrderService,
+                                        Depends(get_order_service)]):
     """Generate invoice PDF for an order"""
     logger.debug(
         f"User {current_user.username} generating invoice for order {order.id}"
@@ -159,7 +162,7 @@ def generate_invoice(current_user: CurrentUser,
             summary="Get order by ID",
             description="Retrieve details of a specific order by its ID")
 def get_order(current_user: CurrentUser,
-              order: Order = Depends(get_order_or_404)):
+              order: Annotated[Order, Depends(get_order_or_404)]):
     """Get a specific order by ID"""
     logger.debug(f"User {current_user.username} fetching order {order.id}")
     return to_public(order)
@@ -169,10 +172,10 @@ def get_order(current_user: CurrentUser,
             response_model=OrderPublic,
             summary="Update order",
             description="Update an existing order by its ID")
-def update_order(order_in: OrderUpdate,
-                 current_user: CurrentUser,
-                 order: Order = Depends(get_order_or_404),
-                 service: OrderService = Depends(get_order_service)):
+def update_order(order_in: OrderUpdate, current_user: CurrentUser,
+                 order: Annotated[Order, Depends(get_order_or_404)],
+                 service: Annotated[OrderService,
+                                    Depends(get_order_service)]):
     """Update an existing order"""
     logger.info(f"User {current_user.username} updating order {order.id}")
 
@@ -187,8 +190,9 @@ def update_order(order_in: OrderUpdate,
                summary="Delete order",
                description="Delete an order by ID (superuser only)")
 def delete_order(current_user: CurrentUser,
-                 order: Order = Depends(get_order_or_404),
-                 service: OrderService = Depends(get_order_service)):
+                 order: Annotated[Order, Depends(get_order_or_404)],
+                 service: Annotated[OrderService,
+                                    Depends(get_order_service)]):
     """Delete an order (superuser only)"""
     logger.debug(f"User {current_user.username} deleting order {order.id}")
 

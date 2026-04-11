@@ -1,5 +1,5 @@
 from uuid import UUID
-from typing import List
+from typing import Annotated, List
 from fastapi import APIRouter, HTTPException, Query, status, Response, Depends
 
 # --- Project Imports ---
@@ -7,7 +7,7 @@ from core.query_utils import parse_params, calculate_pagination, set_pagination_
 from core.logger import logger
 from core.dependencies import CurrentUser
 from core.database import SessionDep
-from core.exceptions import InternalErrorException, NotFoundException
+from core.exceptions import NotFoundException
 from services.client_service import ClientService
 from models.client import Client, ClientCreate, ClientUpdate, ClientPublic, ClientFilters
 
@@ -22,8 +22,9 @@ def get_client_service(session: SessionDep) -> ClientService:
 
 
 def get_client_or_404(
-    client_id: UUID, service: ClientService = Depends(get_client_service)
-) -> Client:
+        client_id: UUID,
+        service: Annotated[ClientService,
+                           Depends(get_client_service)]) -> Client:
     """Dependency to retrieve a client by ID or raise NotFoundException"""
     client = service.get_by_id(client_id)
     if not client:
@@ -47,7 +48,8 @@ def to_public(client: Client) -> ClientPublic:
             description="Retrieve a paginated list of clients with filtering")
 def list_clients(response: Response,
                  current_user: CurrentUser,
-                 service: ClientService = Depends(get_client_service),
+                 service: Annotated[ClientService,
+                                    Depends(get_client_service)],
                  filter_: str = Query("{}", alias="filter"),
                  range_: str = Query("[0, 500]", alias="range"),
                  sort: str = Query('["id", "ASC"]', alias="sort")):
@@ -83,9 +85,9 @@ def list_clients(response: Response,
              status_code=status.HTTP_201_CREATED,
              summary="Create client",
              description="Create a new client in the system")
-def create_client(client_in: ClientCreate,
-                  current_user: CurrentUser,
-                  service: ClientService = Depends(get_client_service)):
+def create_client(client_in: ClientCreate, current_user: CurrentUser,
+                  service: Annotated[ClientService,
+                                     Depends(get_client_service)]):
     logger.debug(f"User {current_user.username} creating client")
 
     client = service.create(client_in)
@@ -99,7 +101,7 @@ def create_client(client_in: ClientCreate,
             summary="Get client by ID",
             description="Retrieve a single client by their UUID")
 def read_client(current_user: CurrentUser,
-                client: Client = Depends(get_client_or_404)):
+                client: Annotated[Client, Depends(get_client_or_404)]):
     """Retrieve a specific client by ID."""
     logger.info(f"User {current_user.username} retrieved client {client.id}")
     return to_public(client)
@@ -109,10 +111,10 @@ def read_client(current_user: CurrentUser,
             response_model=ClientPublic,
             summary="Update client",
             description="Update an existing client's information")
-def update_client(current_user: CurrentUser,
-                  client_in: ClientUpdate,
-                  client: Client = Depends(get_client_or_404),
-                  service: ClientService = Depends(get_client_service)):
+def update_client(current_user: CurrentUser, client_in: ClientUpdate,
+                  client: Annotated[Client, Depends(get_client_or_404)],
+                  service: Annotated[ClientService,
+                                     Depends(get_client_service)]):
     logger.info(f"User {current_user.username} updating client {client.id}")
 
     updated_client = service.update(client, client_in)
@@ -125,8 +127,9 @@ def update_client(current_user: CurrentUser,
                summary="Delete client",
                description="Delete a client if they have no active orders")
 def delete_client(current_user: CurrentUser,
-                  client: Client = Depends(get_client_or_404),
-                  service: ClientService = Depends(get_client_service)):
+                  client: Annotated[Client, Depends(get_client_or_404)],
+                  service: Annotated[ClientService,
+                                     Depends(get_client_service)]):
 
     logger.info(f"User {current_user.username} deleting client {client.id}")
 

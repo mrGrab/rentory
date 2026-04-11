@@ -1,5 +1,5 @@
 from uuid import UUID
-from typing import List
+from typing import Annotated, List
 from fastapi import APIRouter, Query, Response, Depends
 
 # --- Project Imports ---
@@ -27,8 +27,8 @@ def get_variant_service(session: SessionDep) -> ItemVariantService:
 
 
 def get_variant_or_404(
-    variant_id: UUID,
-    service: ItemVariantService = Depends(get_variant_service)
+    variant_id: UUID, service: Annotated[ItemVariantService,
+                                         Depends(get_variant_service)]
 ) -> ItemVariant:
     """Dependency to retrieve a variant by ID or raise NotFoundException"""
     variant = service.get_by_id(variant_id)
@@ -47,7 +47,8 @@ def get_variant_or_404(
             description="Retrieve a list of all item variants")
 def list_variants(response: Response,
                   current_user: CurrentUser,
-                  service: ItemVariantService = Depends(get_variant_service),
+                  service: Annotated[ItemVariantService,
+                                     Depends(get_variant_service)],
                   filter_: str = Query("{}", alias="filter"),
                   range_: str = Query("[0, 500]", alias="range"),
                   sort: str = Query('["id","ASC"]', alias="sort")):
@@ -83,7 +84,8 @@ def list_variants(response: Response,
             summary="Get item variant by ID",
             description="Retrieve a specific item variant by its UUID")
 def get_variant(current_user: CurrentUser,
-                variant: ItemVariant = Depends(get_variant_or_404)):
+                variant: Annotated[ItemVariant,
+                                   Depends(get_variant_or_404)]):
     logger.info(f"User {current_user.username} retrieved variant {variant.id}")
     return variant
 
@@ -92,10 +94,11 @@ def get_variant(current_user: CurrentUser,
             response_model=ItemVariantPublic,
             summary="Update item variant",
             description="Update an existing variant by ID")
-def update_variant(current_user: CurrentUser,
-                   variant_in: ItemVariantUpdate,
-                   variant: ItemVariant = Depends(get_variant_or_404),
-                   service: ItemVariantService = Depends(get_variant_service)):
+def update_variant(current_user: CurrentUser, variant_in: ItemVariantUpdate,
+                   variant: Annotated[ItemVariant,
+                                      Depends(get_variant_or_404)],
+                   service: Annotated[ItemVariantService,
+                                      Depends(get_variant_service)]):
     logger.info(f"User {current_user.username} updating variant {variant.id}")
 
     updated_variant = service.update(variant, variant_in)

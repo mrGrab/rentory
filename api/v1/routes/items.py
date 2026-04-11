@@ -1,6 +1,6 @@
 from uuid import UUID
 from datetime import date
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from fastapi import APIRouter, Query, status, Response, Depends
 
 # --- Project Imports ---
@@ -24,7 +24,8 @@ def get_item_service(session: SessionDep) -> ItemService:
 
 
 def get_item_or_404(
-    item_id: UUID, service: ItemService = Depends(get_item_service)) -> Item:
+        item_id: UUID, service: Annotated[ItemService,
+                                          Depends(get_item_service)]) -> Item:
     """Dependency to retrieve an item by ID or raise NotFoundException"""
     item = service.get_by_id(item_id)
     if not item:
@@ -56,7 +57,8 @@ def to_public(item: Item) -> ItemPublic:
             response_model=List[str],
             summary="Get category options")
 def get_categories(current_user: CurrentUser,
-                   service: ItemService = Depends(get_item_service)):
+                   service: Annotated[ItemService,
+                                      Depends(get_item_service)]):
     """Get distinct category values for dropdown"""
     logger.debug(f"User {current_user.username} fetching category options")
     return service.get_distinct_field_values(Item, "category")
@@ -66,7 +68,8 @@ def get_categories(current_user: CurrentUser,
             response_model=List[str],
             summary="Get status options")
 def get_statuses(current_user: CurrentUser,
-                 service: ItemService = Depends(get_item_service)):
+                 service: Annotated[ItemService,
+                                    Depends(get_item_service)]):
     """Get distinct status values for dropdown"""
     logger.debug(f"User {current_user.username} fetching status options")
     return service.get_distinct_field_values(Item, "status")
@@ -74,7 +77,8 @@ def get_statuses(current_user: CurrentUser,
 
 @router.get("/sizes", response_model=List[str], summary="Get size options")
 def get_sizes(current_user: CurrentUser,
-              service: ItemService = Depends(get_item_service)):
+              service: Annotated[ItemService,
+                                 Depends(get_item_service)]):
     """Get distinct size values for dropdown"""
     logger.debug(f"User {current_user.username} fetching size options")
     return service.get_distinct_field_values(ItemVariant, "size")
@@ -82,7 +86,8 @@ def get_sizes(current_user: CurrentUser,
 
 @router.get("/colors", response_model=List[str], summary="Get color options")
 def get_colors(current_user: CurrentUser,
-               service: ItemService = Depends(get_item_service)):
+               service: Annotated[ItemService,
+                                  Depends(get_item_service)]):
     """Get distinct color values for dropdown"""
     logger.debug(f"User {current_user.username} fetching color options")
     return service.get_distinct_field_values(ItemVariant, "color")
@@ -92,7 +97,8 @@ def get_colors(current_user: CurrentUser,
             response_model=List[str],
             summary="Get variant status options")
 def get_variant_statuses(current_user: CurrentUser,
-                         service: ItemService = Depends(get_item_service)):
+                         service: Annotated[ItemService,
+                                            Depends(get_item_service)]):
     """Get distinct variant status values for dropdown"""
     logger.debug(
         f"User {current_user.username} fetching variant status options")
@@ -108,7 +114,8 @@ def get_variant_statuses(current_user: CurrentUser,
             description="Retrieve a paginated list of items")
 def list_items(response: Response,
                current_user: CurrentUser,
-               service: ItemService = Depends(get_item_service),
+               service: Annotated[ItemService,
+                                  Depends(get_item_service)],
                filter_: str = Query("{}", alias="filter"),
                range_: str = Query("[0, 500]", alias="range"),
                sort: str = Query('["id","DESC"]', alias="sort")):
@@ -147,9 +154,9 @@ def list_items(response: Response,
              status_code=status.HTTP_201_CREATED,
              summary="Create new item",
              description="Create a new item with variants and prices")
-def create_item(item_in: ItemCreate,
-                current_user: CurrentUser,
-                service: ItemService = Depends(get_item_service)):
+def create_item(item_in: ItemCreate, current_user: CurrentUser,
+                service: Annotated[ItemService,
+                                   Depends(get_item_service)]):
 
     logger.info(
         f"User {current_user.username} creating item '{item_in.title}'")
@@ -164,7 +171,8 @@ def create_item(item_in: ItemCreate,
             response_model=ItemPublic,
             summary="Get item by ID",
             description="Retrieve a specific item by its ID")
-def get_item(current_user: CurrentUser, item: Item = Depends(get_item_or_404)):
+def get_item(current_user: CurrentUser,
+             item: Annotated[Item, Depends(get_item_or_404)]):
     logger.info(f"User {current_user.username} retrieved item {item.id}")
     return to_public(item)
 
@@ -174,8 +182,9 @@ def get_item(current_user: CurrentUser, item: Item = Depends(get_item_or_404)):
             summary="Check item availability",
             description="Get item with availability status")
 def check_availability(current_user: CurrentUser,
-                       item: Item = Depends(get_item_or_404),
-                       service: ItemService = Depends(get_item_service),
+                       item: Annotated[Item, Depends(get_item_or_404)],
+                       service: Annotated[ItemService,
+                                          Depends(get_item_service)],
                        start_time: Optional[date] = None,
                        end_time: Optional[date] = None,
                        exclude_order_id: Optional[int] = None):
@@ -196,10 +205,10 @@ def check_availability(current_user: CurrentUser,
             response_model=ItemPublic,
             summary="Update item",
             description="Update an existing item")
-def update_item(item_in: ItemUpdate,
-                current_user: CurrentUser,
-                item: Item = Depends(get_item_or_404),
-                service: ItemService = Depends(get_item_service)):
+def update_item(item_in: ItemUpdate, current_user: CurrentUser,
+                item: Annotated[Item, Depends(get_item_or_404)],
+                service: Annotated[ItemService,
+                                   Depends(get_item_service)]):
     logger.info(f"User {current_user.username} updating item {item.id}")
 
     updated_item = service.update(item, item_in)
@@ -213,8 +222,9 @@ def update_item(item_in: ItemUpdate,
                summary="Delete item",
                description="Delete an item by ID")
 def delete_item(current_user: CurrentUser,
-                item: Item = Depends(get_item_or_404),
-                service: ItemService = Depends(get_item_service)):
+                item: Annotated[Item, Depends(get_item_or_404)],
+                service: Annotated[ItemService,
+                                   Depends(get_item_service)]):
     """Delete an item"""
     logger.info(f"User {current_user.username} deleting item {item.id}")
 
