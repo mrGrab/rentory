@@ -129,6 +129,7 @@ class OrderService:
             variant_id: UUID,
             start_time: date,
             end_time: date,
+            requested_quantity: int = 1,
             exclude_order_id: Optional[int] = None
     ) -> tuple[bool, Optional[str]]:
         """Check if variant is available for booking period"""
@@ -145,8 +146,9 @@ class OrderService:
         if variant.service_end_time and variant.service_end_time > start_time:
             return False, f"Variant {variant_id} under maintenance until {variant.service_end_time}"
 
-        # Check for booking conflicts
-        stmt = select(OrderItemLink.item_variant_id).join(Order)
+        # Calculate reserved quantity across overlapping active orders
+        stmt = select(func.coalesce(func.sum(OrderItemLink.quantity), 0)).join(
+            Order)
         stmt = stmt.where(
             OrderItemLink.item_variant_id == variant_id,
             Order.status.in_([
@@ -164,8 +166,14 @@ class OrderService:
         if exclude_order_id:
             stmt = stmt.where(Order.id != exclude_order_id)
 
-        if self.session.exec(stmt).first():
-            return False, f"Variant {variant_id} already booked during this period"
+        reserved_quantity = self.session.exec(stmt).one()
+        available_quantity = variant.quantity - int(reserved_quantity or 0)
+
+        if available_quantity < requested_quantity:
+            return (
+                False,
+                f"Variant {variant_id}: {available_quantity} unit(s) available, requested {requested_quantity}",
+            )
 
         return True, None
 
@@ -185,6 +193,7 @@ class OrderService:
                 variant_id=item.item_variant_id,
                 start_time=start_time,
                 end_time=end_time,
+                requested_quantity=item.quantity,
                 exclude_order_id=exclude_order_id)
 
             if not is_available:

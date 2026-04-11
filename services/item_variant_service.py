@@ -1,6 +1,6 @@
 from uuid import UUID
 from typing import List, Optional
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 from datetime import datetime
 
 from core.logger import logger
@@ -9,7 +9,6 @@ from models.item_variant import (ItemVariant, ItemVariantFilters,
                                  ItemVariantCreate, ItemVariantPrice)
 from models.links import OrderItemLink
 from models.order import Order, OrderStatus
-from core.exceptions import NotFoundException, BadRequestException
 from core.query_utils import apply_sorting
 from core.database import get_total_count
 
@@ -228,8 +227,9 @@ class ItemVariantService:
             if service_end_date >= start_date:
                 return False, f"Variant {variant.id} under maintenance until {variant.service_end_time}"
 
-        # Check for booking conflicts
-        stmt = select(OrderItemLink.order_id).join(Order)
+        # Sum booked quantities across all overlapping active orders
+        stmt = select(func.coalesce(func.sum(OrderItemLink.quantity),
+                                    0)).join(Order)
         stmt = stmt.where(
             OrderItemLink.item_variant_id == variant.id,
             Order.status.in_([
@@ -245,8 +245,11 @@ class ItemVariantService:
         # Exclude current order when updating
         if exclude_order_id:
             stmt = stmt.where(Order.id != exclude_order_id)
-        order_id = self.session.exec(stmt).first()
-        if order_id:
-            return False, f"Variant {variant.id} already booked during this period by {order_id}"
+        booked_quantity = self.session.exec(stmt).one()
+        if booked_quantity >= variant.quantity:
+            available = variant.quantity - booked_quantity
+            return False, (
+                f"Variant {variant.id} is fully booked during this period "
+                f"({booked_quantity}/{variant.quantity} units booked)")
 
         return True, None

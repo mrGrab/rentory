@@ -31,3 +31,13 @@ dev = [
     "pytest>=9.0.2",
     "rich>=14.3.3",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = [
+    "test_*.py",
+    "*_test.py",
+    "*_route.py",
+    "*_routes.py",
+    "*_service.py",
+]

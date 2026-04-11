@@ -1,7 +1,8 @@
 import secrets
+import warnings
 from typing import List, Optional
 from pathlib import Path
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -21,16 +22,38 @@ class Settings(BaseSettings):
     APP_RELOAD: bool = True
 
     # Security
-    # openssl rand -hex 32
+    # Set these explicitly via environment variables or .env file.
+    # Generate with: openssl rand -hex 32
     ACCESS_TOKEN_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_HOURS: int = 12
     REFRESH_TOKEN_EXPIRE_HOURS: int = 120
-    ACCESS_TOKEN_SECRET_KEY: str = Field(
-        default_factory=lambda: secrets.token_urlsafe(32))
-    REFRESH_TOKEN_SECRET_KEY: str = Field(
-        default_factory=lambda: secrets.token_urlsafe(32))
-    SESSION_SECRET_KEY: str = Field(
-        default_factory=lambda: secrets.token_urlsafe(32))
+    ACCESS_TOKEN_SECRET_KEY: Optional[str] = None
+    REFRESH_TOKEN_SECRET_KEY: Optional[str] = None
+    SESSION_SECRET_KEY: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_secrets(self) -> "Settings":
+        secret_fields = [
+            "ACCESS_TOKEN_SECRET_KEY",
+            "REFRESH_TOKEN_SECRET_KEY",
+            "SESSION_SECRET_KEY",
+        ]
+        missing = [f for f in secret_fields if not getattr(self, f)]
+        if missing:
+            if self.ENVIRONMENT == "production":
+                raise ValueError(
+                    f"Missing required secret(s) in production: {', '.join(missing)}. "
+                    "Set them via environment variables or .env file.")
+            # Development-only: generate ephemeral secrets and warn.
+            warnings.warn(
+                f"Secret(s) {', '.join(missing)} not set. "
+                "Generating ephemeral values — sessions and tokens will be "
+                "invalidated on every restart. Set them explicitly for stable behaviour.",
+                stacklevel=2,
+            )
+            for field in missing:
+                object.__setattr__(self, field, secrets.token_urlsafe(32))
+        return self
 
     # Files
     UPLOAD_DIR: str = "static/images"

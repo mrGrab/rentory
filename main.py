@@ -28,8 +28,8 @@ async def lifespan(app: FastAPI):
     logger.setLevel(LOG_LEVELS[log_level])
     try:
         create_db_and_tables()
-    except Exception as e:
-        print("PRE starting error: ", e)
+    except Exception:
+        logger.exception("Failed to initialize database at startup")
         raise
     yield
 
