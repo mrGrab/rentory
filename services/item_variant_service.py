@@ -8,7 +8,7 @@ from models.item_variant import (ItemVariant, ItemVariantFilters,
                                  ItemVariantUpdate, ItemVariantStatus,
                                  ItemVariantCreate, ItemVariantPrice)
 from models.links import OrderItemLink
-from models.order import Order
+from models.order import Order, OrderStatus
 from core.exceptions import NotFoundException, BadRequestException
 from core.query_utils import apply_sorting
 from core.database import get_total_count
@@ -232,8 +232,12 @@ class ItemVariantService:
         stmt = select(OrderItemLink.order_id).join(Order)
         stmt = stmt.where(
             OrderItemLink.item_variant_id == variant.id,
-            Order.status.in_(
-                ["booked", "booked_not_paid", "booked_paid", "issued"]),
+            Order.status.in_([
+                OrderStatus.BOOKED,
+                OrderStatus.BOOKED_NOT_PAID,
+                OrderStatus.BOOKED_PAID,
+                OrderStatus.ISSUED,
+            ]),
             Order.is_archived == False,
             Order.start_time <= end_time,
             Order.end_time >= start_time,

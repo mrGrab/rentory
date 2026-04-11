@@ -1,5 +1,5 @@
 from uuid import UUID
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from typing import List, Optional
 from sqlmodel import select, func
 from sqlalchemy.sql.expression import Select
@@ -12,10 +12,10 @@ from core.query_utils import apply_sorting
 from core.database import get_total_count
 from core.exceptions import ConflictException, BadRequestException
 from models.client import Client
-from models.payment import Payment
+from models.payment import Payment, PaymentType
 from models.item_variant import ItemVariant
 from models.links import OrderItemLink
-from models.order import Order, OrderCreate, OrderUpdate, OrderFilters
+from models.order import Order, OrderCreate, OrderUpdate, OrderFilters, OrderStatus
 
 
 class OrderService:
@@ -149,8 +149,12 @@ class OrderService:
         stmt = select(OrderItemLink.item_variant_id).join(Order)
         stmt = stmt.where(
             OrderItemLink.item_variant_id == variant_id,
-            Order.status.in_(
-                ["booked", "booked_not_paid", "booked_paid", "issued"]),
+            Order.status.in_([
+                OrderStatus.BOOKED,
+                OrderStatus.BOOKED_NOT_PAID,
+                OrderStatus.BOOKED_PAID,
+                OrderStatus.ISSUED,
+            ]),
             Order.is_archived == False,
             Order.start_time <= end_time,
             Order.end_time >= start_time,
@@ -338,34 +342,69 @@ class OrderService:
         """Generate PDF invoice from order data"""
         logger.debug(f"Generating invoice PDF for order {order.id}")
 
-        # Prepare invoice data
-
         items = [{
             "title": link.item_variant.item.title,
             "image_url": link.item_variant.item.image_url,
             "size": link.item_variant.size,
             "color": link.item_variant.color,
             "price": link.price,
-            "deposit": link.deposit
+            "deposit": link.deposit,
+            "quantity": link.quantity,
         } for link in order.item_links]
 
+        rent_paid = sum(p.amount for p in order.payments
+                        if p.entry_type == PaymentType.PAYMENT)
+        deposit_paid = sum(p.amount for p in order.payments
+                           if p.entry_type == PaymentType.DEPOSIT)
+
+        delivery = order.delivery_info or {}
+        if hasattr(delivery, "pickup_type"):
+            pickup_type = delivery.pickup_type
+            return_type = delivery.return_type
+        else:
+            pickup_type = delivery.get("pickup_type", "")
+            return_type = delivery.get("return_type", "")
+
+        is_postal_pickup = pickup_type == "postal_service"
+        is_postal_return = return_type == "postal_service"
+
+        display_start = order.start_time + timedelta(
+            days=1) if is_postal_pickup else order.start_time
+        display_end = order.end_time + timedelta(
+            days=2) if is_postal_return else order.end_time
+
         invoice_data = {
-            "order": order,
-            "client": order.client,
-            "items": items,
-            "total_paid": sum(p.amount for p in order.payments)
+            "order":
+            order,
+            "client":
+            order.client,
+            "items":
+            items,
+            "payments":
+            order.payments,
+            "rent_paid":
+            rent_paid,
+            "deposit_paid":
+            deposit_paid,
+            "rent_due":
+            order.price - rent_paid,
+            "deposit_due":
+            order.deposit_amount - deposit_paid,
+            "display_start":
+            display_start,
+            "display_end":
+            display_end,
+            "pickup_action_label":
+            "ВІДПРАВИМО" if is_postal_pickup else "ОТРИМАТИ",
+            "return_action_label":
+            "МАЄ ПОВЕРНУТИСЬ" if is_postal_return else "ПОВЕРНУТИ",
         }
 
-        # Calculate balance
-        invoice_data["amount_due"] = order.price - invoice_data["total_paid"]
-
-        # Render HTML from template
         env = Environment(loader=FileSystemLoader("templates"),
                           autoescape=select_autoescape(['html', 'xml']))
         template = env.get_template("invoice.html")
         html_content = template.render(**invoice_data)
 
-        # Generate PDF
         pdf_bytes = HTML(string=html_content).write_pdf()
 
         logger.debug(f"Invoice PDF generated for order {order.id}")
