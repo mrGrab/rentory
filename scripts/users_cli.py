@@ -30,6 +30,8 @@ from models.user import User, UserCreate
 
 console = Console()
 
+ERR_ONE_IDENTIFIER = "[red]Provide exactly one: --user, --email, or --id[/red]"
+
 
 @click.group()
 def cli() -> None:
@@ -201,8 +203,7 @@ def show_user(username: str | None, email: str | None,
     """Show user details by username, email, or id."""
     identifiers = [username, email, user_id]
     if sum(value is not None for value in identifiers) != 1:
-        console.print(
-            "[red]Provide exactly one: --user, --email, or --id[/red]")
+        console.print(ERR_ONE_IDENTIFIER)
         return
 
     with Session(engine) as session:
@@ -242,8 +243,7 @@ def update_user(
     """Update an existing user."""
     identifiers = [username, email, user_id]
     if sum(value is not None for value in identifiers) != 1:
-        console.print(
-            "[red]Provide exactly one: --user, --email, or --id[/red]")
+        console.print(ERR_ONE_IDENTIFIER)
         return
 
     with Session(engine) as session:
@@ -330,8 +330,7 @@ def activate_user(
     """Activate an existing user."""
     identifiers = [username, email, user_id]
     if sum(value is not None for value in identifiers) != 1:
-        console.print(
-            "[red]Provide exactly one: --user, --email, or --id[/red]")
+        console.print(ERR_ONE_IDENTIFIER)
         return
 
     with Session(engine) as session:
@@ -381,8 +380,7 @@ def deactivate_user(
     """Deactivate an existing user."""
     identifiers = [username, email, user_id]
     if sum(value is not None for value in identifiers) != 1:
-        console.print(
-            "[red]Provide exactly one: --user, --email, or --id[/red]")
+        console.print(ERR_ONE_IDENTIFIER)
         return
 
     with Session(engine) as session:
@@ -432,8 +430,7 @@ def delete_user(
     """Delete a user permanently."""
     identifiers = [username, email, user_id]
     if sum(value is not None for value in identifiers) != 1:
-        console.print(
-            "[red]Provide exactly one: --user, --email, or --id[/red]")
+        console.print(ERR_ONE_IDENTIFIER)
         return
 
     with Session(engine) as session:

@@ -2,6 +2,7 @@ import io
 from pathlib import Path
 from uuid import uuid4
 from fastapi import APIRouter, UploadFile, File, status
+from typing import Annotated
 from PIL import Image, ImageOps
 
 # --- Project Imports ---
@@ -80,8 +81,8 @@ def create_thumbnail(image_data: bytes, output_path: Path) -> dict:
     summary="Upload and process an image",
     description="Upload an image, which will be converted to a JPEG thumbnail.",
     status_code=status.HTTP_201_CREATED)
-async def upload_image(current_user: CurrentUser,
-                       image: UploadFile = File(...)):
+async def upload_image(current_user: CurrentUser, image: Annotated[UploadFile,
+                                                                   File(...)]):
     """
     Handles the image upload process:
     1. Validates the file type and size.
