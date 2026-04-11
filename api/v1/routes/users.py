@@ -5,10 +5,10 @@ from fastapi import APIRouter, Depends, Query, Response, status
 # --- Project Imports ---
 from core.query_utils import parse_params, calculate_pagination, set_pagination_headers
 from core.logger import logger
-from core.dependencies import CurrentUser
+from core.dependencies import CurrentUser, CurrentSuperuser
 from core.database import SessionDep
 from core.exceptions import NotFoundException
-from models.user import UserCreate, UserPublic, User, UserFilters
+from models.user import UserCreate, UserPublic, User, UserFilters, UserUpdate
 from services.user_service import UserService
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -34,10 +34,13 @@ def get_user_or_404(
 # ---------- Routes ----------
 
 
-@router.get("",
-            response_model=list[UserPublic],
-            summary="List all users",
-            description="Retrieve a paginated list of all users")
+@router.get(
+    "",
+    response_model=list[UserPublic],
+    summary="List all users",
+    description=
+    "Retrieve a paginated list of all users. Available to all authenticated users."
+)
 def list_users(response: Response,
                current_user: CurrentUser,
                service: UserService = Depends(get_user_service),
@@ -64,18 +67,19 @@ def list_users(response: Response,
     return result
 
 
-@router.post("",
-             response_model=UserPublic,
-             status_code=status.HTTP_201_CREATED,
-             summary="Create a new user",
-             description="Register a new user account")
+@router.post(
+    "",
+    response_model=UserPublic,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new user (superuser only)",
+    description="Create a new user account. Requires superuser privileges.")
 def create_user(user_in: UserCreate,
-                current_user: CurrentUser,
+                current_user: CurrentSuperuser,
                 service: UserService = Depends(get_user_service)):
     """Create a new user account"""
     logger.debug(f"User {current_user.username} creating user")
 
-    user = service.create_user(user_in)
+    user = service.create(user_in)
     logger.info(f"User {current_user.username} created user {user.id}")
     return UserPublic.model_validate(user)
 
@@ -90,12 +94,45 @@ def read_current_user(current_user: CurrentUser) -> UserPublic:
     return UserPublic.model_validate(current_user)
 
 
-@router.get("/{user_id}",
-            response_model=UserPublic,
-            summary="Get user by ID",
-            description="Retrieve a user's profile by their ID")
+@router.get(
+    "/{user_id}",
+    response_model=UserPublic,
+    summary="Get user by ID",
+    description=
+    "Retrieve a user's profile by their ID. Available to all authenticated users."
+)
 def read_user_by_id(current_user: CurrentUser,
                     user: User = Depends(get_user_or_404)):
     """Get a specific user by ID"""
     logger.info(f"User {current_user.username} retrieved user {user.id}")
     return UserPublic.model_validate(user)
+
+
+@router.put(
+    "/{user_id}",
+    response_model=UserPublic,
+    summary="Update user (superuser only)",
+    description="Update a user's details. Requires superuser privileges.")
+def update_user(user_in: UserUpdate,
+                current_user: CurrentSuperuser,
+                service: UserService = Depends(get_user_service),
+                user: User = Depends(get_user_or_404)):
+    """Update a user's details"""
+    logger.debug(f"Superuser {current_user.username} updating user {user.id}")
+    updated = service.update(user, user_in)
+    logger.info(f"Superuser {current_user.username} updated user {updated.id}")
+    return UserPublic.model_validate(updated)
+
+
+@router.delete(
+    "/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete user (superuser only)",
+    description="Permanently delete a user. Requires superuser privileges.")
+def delete_user(current_user: CurrentSuperuser,
+                service: UserService = Depends(get_user_service),
+                user: User = Depends(get_user_or_404)):
+    """Delete a user permanently"""
+    logger.debug(f"Superuser {current_user.username} deleting user {user.id}")
+    service.delete(user)
+    logger.info(f"Superuser {current_user.username} deleted user {user.id}")

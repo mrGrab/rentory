@@ -5,9 +5,9 @@ from sqlmodel import select
 # --- Project Imports ---
 from core.query_utils import apply_sorting
 from core.logger import logger
-from core.exceptions import ConflictException
-from models.user import User, UserCreate, UserFilters
-from core.database import SessionDep, get_total_count, create_user, get_user_by_username, get_user_by_email
+from core.exceptions import ConflictException, NotFoundException
+from models.user import User, UserCreate, UserFilters, UserUpdate
+from core.database import SessionDep, get_total_count, create_user, get_user_by_username, get_user_by_email, hash_password
 
 
 class UserService:
@@ -78,3 +78,46 @@ class UserService:
         user = create_user(self.session, user_in)
         logger.info(f"Successfully created user: {user.username}")
         return user
+
+    def update(self, user: User, user_in: UserUpdate) -> User:
+        """Update an existing user's details"""
+        logger.debug(f"Updating user: {user.id}")
+
+        update_data = user_in.model_dump(exclude_unset=True)
+
+        # Hash any incoming password before persisting
+        if update_data.get("password"):
+            update_data["hashed_password"] = hash_password(
+                update_data.pop("password"))
+        else:
+            update_data.pop("password", None)
+
+        # Uniqueness checks for changed fields
+        if "username" in update_data:
+            existing = get_user_by_username(self.session,
+                                            update_data["username"])
+            if existing and existing.id != user.id:
+                raise ConflictException(
+                    f"Username '{update_data['username']}' already exists")
+
+        if "email" in update_data:
+            existing = get_user_by_email(self.session, update_data["email"])
+            if existing and existing.id != user.id:
+                raise ConflictException(
+                    f"Email '{update_data['email']}' already exists")
+
+        for field, value in update_data.items():
+            setattr(user, field, value)
+
+        self.session.add(user)
+        self.session.commit()
+        self.session.refresh(user)
+        logger.info(f"Successfully updated user: {user.username}")
+        return user
+
+    def delete(self, user: User) -> None:
+        """Permanently delete a user"""
+        logger.debug(f"Deleting user: {user.id}")
+        self.session.delete(user)
+        self.session.commit()
+        logger.info(f"Successfully deleted user: {user.id}")

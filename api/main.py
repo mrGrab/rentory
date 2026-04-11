@@ -9,6 +9,7 @@ from api.v1.routes import (
     clients,
     upload,
     item_variants,
+    finance,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["API v1"])
@@ -20,6 +21,7 @@ router.include_router(item_variants.router)
 router.include_router(orders.router)
 router.include_router(clients.router)
 router.include_router(upload.router)
+router.include_router(finance.router)
 
 
 @router.get("/",
