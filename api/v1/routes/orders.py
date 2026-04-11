@@ -76,13 +76,14 @@ def to_public(order: Order) -> OrderPublic:
 @router.get("",
             response_model=List[OrderPublic],
             summary="List orders with pagination")
-def list_orders(response: Response,
-                current_user: CurrentUser,
-                service: Annotated[OrderService,
-                                   Depends(get_order_service)],
-                filter_: str = Query("{}", alias="filter"),
-                range_: str = Query("[0, 500]", alias="range"),
-                sort: str = Query('["created_at", "DESC"]', alias="sort")):
+def list_orders(
+        response: Response,
+        current_user: CurrentUser,
+        service: Annotated[OrderService,
+                           Depends(get_order_service)],
+        filter_: Annotated[str, Query(alias="filter")] = "{}",
+        range_: Annotated[str, Query(alias="range")] = "[0, 500]",
+        sort: Annotated[str, Query(alias="sort")] = '["created_at", "DESC"]'):
     """List orders with filtering, sorting, and pagination"""
 
     logger.debug(f"User {current_user.username} listing orders")

@@ -9,7 +9,7 @@ router = APIRouter()
             summary="Get application version",
             response_description="Current version of the application")
 async def read_version() -> JSONResponse:
-  """
+    """
     Returns the current version of the application as defined in settings.
     """
-  return JSONResponse(content={"version": settings.VERSION})
+    return JSONResponse(content={"version": settings.VERSION})

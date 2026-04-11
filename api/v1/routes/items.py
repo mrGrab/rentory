@@ -116,9 +116,9 @@ def list_items(response: Response,
                current_user: CurrentUser,
                service: Annotated[ItemService,
                                   Depends(get_item_service)],
-               filter_: str = Query("{}", alias="filter"),
-               range_: str = Query("[0, 500]", alias="range"),
-               sort: str = Query('["id","DESC"]', alias="sort")):
+               filter_: Annotated[str, Query(alias="filter")] = "{}",
+               range_: Annotated[str, Query(alias="range")] = "[0, 500]",
+               sort: Annotated[str, Query(alias="sort")] = '["id","DESC"]'):
 
     logger.debug(f"User {current_user.username} listing items")
 

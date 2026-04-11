@@ -49,9 +49,9 @@ def list_variants(response: Response,
                   current_user: CurrentUser,
                   service: Annotated[ItemVariantService,
                                      Depends(get_variant_service)],
-                  filter_: str = Query("{}", alias="filter"),
-                  range_: str = Query("[0, 500]", alias="range"),
-                  sort: str = Query('["id","ASC"]', alias="sort")):
+                  filter_: Annotated[str, Query(alias="filter")] = "{}",
+                  range_: Annotated[str, Query(alias="range")] = "[0, 500]",
+                  sort: Annotated[str, Query(alias="sort")] = '["id","ASC"]'):
     logger.debug(f"User {current_user.username} listing variants")
 
     # Parse query parameters

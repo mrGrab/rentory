@@ -47,9 +47,9 @@ def list_users(response: Response,
                current_user: CurrentUser,
                service: Annotated[UserService,
                                   Depends(get_user_service)],
-               filter_: str = Query("{}", alias="filter"),
-               range_: str = Query("[0, 500]", alias="range"),
-               sort: str = Query('["id","DESC"]', alias="sort")):
+               filter_: Annotated[str, Query(alias="filter")] = "{}",
+               range_: Annotated[str, Query(alias="range")] = "[0, 500]",
+               sort: Annotated[str, Query(alias="sort")] = '["id","DESC"]'):
     """List users with filtering, sorting, and pagination"""
     logger.debug(f"User {current_user.username} listing users")
 
