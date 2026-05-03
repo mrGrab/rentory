@@ -235,7 +235,6 @@ class ItemVariantService:
             Order.status.in_([
                 OrderStatus.BOOKED,
                 OrderStatus.BOOKED_NOT_PAID,
-                OrderStatus.BOOKED_PAID,
                 OrderStatus.ISSUED,
             ]),
             Order.is_archived == False,

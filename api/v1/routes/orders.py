@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 # --- Project Imports ---
 from services.order_service import OrderService
 from core.logger import logger
-from core.dependencies import CurrentUser
+from core.dependencies import CurrentUser, CurrentSuperuser
 from core.database import SessionDep
 from core.exceptions import NotFoundException
 from core.query_utils import parse_params, calculate_pagination, set_pagination_headers
@@ -190,7 +190,7 @@ def update_order(order_in: OrderUpdate, current_user: CurrentUser,
                status_code=status.HTTP_200_OK,
                summary="Delete order",
                description="Delete an order by ID (superuser only)")
-def delete_order(current_user: CurrentUser,
+def delete_order(current_user: CurrentSuperuser,
                  order: Annotated[Order, Depends(get_order_or_404)],
                  service: Annotated[OrderService,
                                     Depends(get_order_service)]):

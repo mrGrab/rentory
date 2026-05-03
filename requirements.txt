@@ -4,9 +4,9 @@ alembic==1.18.4
     # via rentory (pyproject.toml)
 argon2-cffi==25.1.0
     # via rentory (pyproject.toml)
-authlib==1.6.9
+authlib==1.7.0
     # via rentory (pyproject.toml)
-fastapi==0.135.3
+fastapi==0.136.1
     # via rentory (pyproject.toml)
 httpx==0.28.1
     # via rentory (pyproject.toml)
@@ -14,27 +14,27 @@ itsdangerous==2.2.0
     # via rentory (pyproject.toml)
 jinja2==3.1.6
     # via rentory (pyproject.toml)
-mysql-connector-python==9.6.0
+mysql-connector-python==9.7.0
     # via rentory (pyproject.toml)
-phonenumbers==9.0.27
+phonenumbers==9.0.29
     # via rentory (pyproject.toml)
 pillow==12.2.0
     # via rentory (pyproject.toml)
-pydantic==2.12.5
+pydantic==2.13.3
     # via rentory (pyproject.toml)
-pydantic-extra-types==2.11.2
+pydantic-extra-types==2.11.1
     # via rentory (pyproject.toml)
-pydantic-settings==2.13.1
+pydantic-settings==2.14.0
     # via rentory (pyproject.toml)
 pyjwt==2.12.1
     # via rentory (pyproject.toml)
-python-multipart==0.0.26
+python-multipart==0.0.27
     # via rentory (pyproject.toml)
 sqlmodel==0.0.38
     # via rentory (pyproject.toml)
 systemd-python==235
     # via rentory (pyproject.toml)
-uvicorn==0.44.0
+uvicorn==0.46.0
     # via rentory (pyproject.toml)
 weasyprint==68.1
     # via rentory (pyproject.toml)

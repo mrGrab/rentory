@@ -147,14 +147,13 @@ class OrderService:
             return False, f"Variant {variant_id} under maintenance until {variant.service_end_time}"
 
         # Calculate reserved quantity across overlapping active orders
-        stmt = select(func.coalesce(func.sum(OrderItemLink.quantity), 0)).join(
-            Order)
+        stmt = select(func.coalesce(func.sum(OrderItemLink.quantity),
+                                    0)).join(Order)
         stmt = stmt.where(
             OrderItemLink.item_variant_id == variant_id,
             Order.status.in_([
                 OrderStatus.BOOKED,
                 OrderStatus.BOOKED_NOT_PAID,
-                OrderStatus.BOOKED_PAID,
                 OrderStatus.ISSUED,
             ]),
             Order.is_archived == False,
@@ -377,9 +376,8 @@ class OrderService:
         is_postal_pickup = pickup_type == "postal_service"
         is_postal_return = return_type == "postal_service"
 
-        display_start = order.start_time + timedelta(
-            days=1) if is_postal_pickup else order.start_time
-        display_end = order.end_time + timedelta(
+        display_start = order.start_time
+        display_end = order.end_time - timedelta(
             days=2) if is_postal_return else order.end_time
 
         invoice_data = {

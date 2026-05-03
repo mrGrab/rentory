@@ -7,22 +7,23 @@ requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
-    "authlib>=1.6.8",
-    "fastapi>=0.129.0",
+    "authlib>=1.7.0",
+    "fastapi>=0.136.1",
     "httpx>=0.28.1",
     "itsdangerous>=2.2.0",
     "jinja2>=3.1.6",
-    "mysql-connector-python>=9.6.0",
-    "phonenumbers>=9.0.24",
-    "pillow>=12.1.1",
-    "pydantic-extra-types>=2.11.0",
-    "pydantic-settings>=2.13.1",
-    "pydantic[email]>=2.12.4",
-    "pyjwt>=2.11.0",
-    "python-multipart>=0.0.22",
-    "sqlmodel>=0.0.35",
+    "joserfc>=1.6.4",
+    "mysql-connector-python>=9.7.0",
+    "phonenumbers>=9.0.29",
+    "pillow>=12.2.0",
+    "pydantic-extra-types>=2.11.1",
+    "pydantic-settings>=2.14.0",
+    "pydantic[email]>=2.13.3",
+    "pyjwt>=2.12.1",
+    "python-multipart>=0.0.27",
+    "sqlmodel>=0.0.38",
     "systemd-python>=235",
-    "uvicorn>=0.41.0",
+    "uvicorn>=0.46.0",
     "weasyprint>=68.1",
 ]
 
@@ -33,6 +34,9 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::authlib.deprecate.AuthlibDeprecationWarning",
+]
 testpaths = ["tests"]
 python_files = [
     "test_*.py",

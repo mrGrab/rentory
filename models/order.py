@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 class OrderStatus(str, Enum):
     BOOKED = "booked"  # booked
     BOOKED_NOT_PAID = "booked_not_paid"  # booked, but not paid
-    BOOKED_PAID = "booked_paid"  # reserved and payment received
     ISSUED = "issued"  # item(s) handed over to client
     RETURNED = "returned"  # item(s) returned
     DONE = "done"  # fully closed (checked, finalized)

@@ -1,6 +1,6 @@
 # Core database functionality
 import secrets
-from typing import Generator, Annotated
+from typing import Generator, Annotated, TypeAlias
 from fastapi import Depends
 from sqlmodel import Session, SQLModel, create_engine, select, func
 from argon2 import PasswordHasher
@@ -26,7 +26,7 @@ def get_session() -> Generator[Session, None, None]:
         yield session
 
 
-SessionDep = Annotated[Session, Depends(get_session)]
+SessionDep: TypeAlias = Annotated[Session, Depends(get_session)]
 
 
 def hash_password(password: str) -> str:

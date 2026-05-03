@@ -1,7 +1,7 @@
 # FastAPI dependencies
 
 # --- Core Imports ---
-from typing import Annotated
+from typing import Annotated, TypeAlias
 from fastapi import Depends
 
 # --- Project Imports ---
@@ -12,7 +12,7 @@ from core.auth import oauth2_scheme, decode_token
 from models.user import User
 from core.exceptions import AuthenticationException, PermissionException
 
-TokenDep = Annotated[str, Depends(oauth2_scheme)]
+TokenDep: TypeAlias = Annotated[str, Depends(oauth2_scheme)]
 
 
 # ================================================================================
@@ -61,5 +61,5 @@ def get_current_superuser(
 # ================================================================================
 #  Combined Dependency Annotations for API Routes
 # ================================================================================
-CurrentUser = Annotated[User, Depends(get_current_user)]
-CurrentSuperuser = Annotated[User, Depends(get_current_superuser)]
+CurrentUser: TypeAlias = Annotated[User, Depends(get_current_user)]
+CurrentSuperuser: TypeAlias = Annotated[User, Depends(get_current_superuser)]
