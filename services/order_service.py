@@ -75,7 +75,7 @@ class OrderService:
         if filters.client_id:
             stmt = stmt.where(Order.client_id == filters.client_id)
         if filters.status:
-            stmt = stmt.where(Order.status == filters.status)
+            stmt = stmt.where(Order.status.in_(filters.status))
         if filters.pickup_type:
             stmt = stmt.where(
                 Order.delivery_info["pickup_type"] == filters.pickup_type)
@@ -216,6 +216,11 @@ class OrderService:
                                   start_time=order_in.start_time,
                                   end_time=order_in.end_time)
 
+        # Zero deposit for trusted clients
+        client = self.session.get(Client, order_in.client_id)
+        if client and client.is_trusted:
+            order_in.deposit_amount = 0
+
         # Create the order
         order_data = order_in.model_dump(exclude={"items", "payments"},
                                          exclude_unset=True)
@@ -277,6 +282,11 @@ class OrderService:
         # Update order fields
         for field, value in update_data.items():
             setattr(order, field, value)
+
+        # Zero deposit for trusted clients (enforced after field update)
+        client = self.session.get(Client, order.client_id)
+        if client and client.is_trusted:
+            order.deposit_amount = 0
 
         # Update items if provided
         if order_in.items is not None:
@@ -404,7 +414,7 @@ class OrderService:
             "pickup_action_label":
             "ВІДПРАВИМО" if is_postal_pickup else "ОТРИМАТИ",
             "return_action_label":
-            "МАЄ ПОВЕРНУТИСЬ" if is_postal_return else "ПОВЕРНУТИ",
+            "ВІДПРАВИТИ" if is_postal_return else "ПОВЕРНУТИ",
         }
 
         env = Environment(loader=FileSystemLoader("templates"),

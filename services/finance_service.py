@@ -22,6 +22,7 @@ class FinanceService:
 
     def _apply_date_filter(self, stmt, date_from: Optional[date],
                            date_to: Optional[date]):
+        stmt = stmt.where(Order.is_archived.is_(False))
         if date_from:
             stmt = stmt.where(Order.start_time >= date_from)
         if date_to:
@@ -60,7 +61,7 @@ class FinanceService:
             select(
                 func.count(Order.id).label("cnt"),
                 func.avg(Order.price).label("avg_price"),
-            ).where(Order.is_archived.is_(False)),
+            ),
             date_from,
             date_to,
         )

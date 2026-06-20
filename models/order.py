@@ -129,7 +129,7 @@ class OrderPublic(OrderBase):
 
 class OrderFilters(SQLModel):
     id: Optional[List[int]] = None
-    status: Optional[OrderStatus] = None
+    status: Optional[List[OrderStatus]] = None
     client_id: Optional[UUID] = None
     start_time: Optional[date] = None
     end_time: Optional[date] = None
@@ -139,6 +139,16 @@ class OrderFilters(SQLModel):
     item_ids: Optional[List[UUID]] = None
     is_archived: Optional[bool] = None
     created_at: Optional[datetime] = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def parse_status_to_list(cls, value: Any) -> Optional[List[OrderStatus]]:
+        if value is None or value == "":
+            return None
+
+        if isinstance(value, list):
+            return [OrderStatus(v) for v in value if v]
+        return [OrderStatus(value)]
 
     @field_validator("id", mode="before")
     @classmethod

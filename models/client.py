@@ -29,6 +29,7 @@ class Client(UUIDMixin, TimestampMixin, table=True):
     notes: Optional[str] = Field(max_length=512)
     discount: Optional[int] = Field(default=None, ge=0, le=100)
     is_archived: bool = Field(default=False)
+    is_trusted: bool = Field(default=False)
 
     orders: List["Order"] = Relationship(back_populates="client")
 
@@ -44,6 +45,7 @@ class ClientBase(SQLModel):
     email: Optional[EmailStr] = None
     notes: Optional[str] = None
     discount: Optional[int] = Field(default=None, ge=0, le=100)
+    is_trusted: bool = False
 
 
 class ClientCreate(ClientBase):
@@ -73,3 +75,4 @@ class ClientFilters(BaseModel):
     surname: Optional[str] = None
     discount: Optional[int] = None
     is_archived: Optional[bool] = None
+    is_trusted: Optional[bool] = None

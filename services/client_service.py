@@ -38,6 +38,8 @@ class ClientService:
             stmt = stmt.where(Client.discount == filters.discount)
         if filters.is_archived is not None:
             stmt = stmt.where(Client.is_archived == filters.is_archived)
+        if filters.is_trusted is not None:
+            stmt = stmt.where(Client.is_trusted == filters.is_trusted)
 
         return stmt.distinct()
 
