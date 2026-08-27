@@ -1,15 +1,17 @@
 # Core database functionality
 import secrets
-from typing import Generator, Annotated, TypeAlias
-from fastapi import Depends
-from sqlmodel import Session, SQLModel, create_engine, select, func
+from collections.abc import Generator
+from typing import Annotated
+
 from argon2 import PasswordHasher
+from fastapi import Depends
+from sqlmodel import Session, SQLModel, create_engine, func, select
 
 # --- Project Imports ---
 from core.config import settings
+from core.exceptions import InternalErrorException
 from core.logger import logger
 from models.user import User, UserCreate
-from core.exceptions import InternalErrorException
 
 engine = create_engine(settings.database_url, echo=False)
 ph = PasswordHasher()
@@ -20,13 +22,13 @@ def create_db_and_tables():
 
 
 # --- Session Management ---
-def get_session() -> Generator[Session, None, None]:
+def get_session() -> Generator[Session]:
     """Dependency to get a new database session for each request"""
     with Session(engine) as session:
         yield session
 
 
-SessionDep: TypeAlias = Annotated[Session, Depends(get_session)]
+type SessionDep = Annotated[Session, Depends(get_session)]
 
 
 def hash_password(password: str) -> str:
@@ -60,14 +62,14 @@ def create_user(session: Session, user_in: UserCreate) -> User:
         session.add(db_user)
         session.commit()
         session.refresh(db_user)
-        logger.info(
-            f"User {db_user.username} created successfully (id={db_user.id})")
+        logger.info(f"User {db_user.username} created successfully (id={db_user.id})")
         return db_user
     except Exception as e:
         session.rollback()
         logger.error(f"Error creating user '{user_in.username}': {e}")
         raise InternalErrorException(
-            "An unexpected error occurred while creating the user.")
+            "An unexpected error occurred while creating the user."
+        )
 
 
 def get_total_count(session: Session, stmt) -> int:

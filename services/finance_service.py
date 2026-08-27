@@ -1,27 +1,24 @@
 from datetime import date
-from typing import Optional, List
 
 from sqlalchemy import distinct
-from sqlmodel import Session, select, func
+from sqlmodel import Session, func, select
 
-from models.order import Order, OrderStatus
-from models.payment import Payment, PaymentMethod, PaymentType
-from models.user import User
 from models.finance import (
     FinanceSummary,
     PaymentMethodBreakdown,
-    UserBreakdown,
     PaymentRecord,
+    UserBreakdown,
 )
+from models.order import Order, OrderStatus
+from models.payment import Payment, PaymentMethod, PaymentType
+from models.user import User
 
 
 class FinanceService:
-
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def _apply_date_filter(self, stmt, date_from: Optional[date],
-                           date_to: Optional[date]):
+    def _apply_date_filter(self, stmt, date_from: date | None, date_to: date | None):
         stmt = stmt.where(Order.is_archived.is_(False))
         if date_from:
             stmt = stmt.where(Order.start_time >= date_from)
@@ -35,8 +32,9 @@ class FinanceService:
                 Payment.entry_type,
                 Payment.payment_method,
                 func.sum(Payment.amount).label("total"),
-            ).join(Order, Payment.order_id == Order.id).group_by(
-                Payment.entry_type, Payment.payment_method),
+            )
+            .join(Order, Payment.order_id == Order.id)
+            .group_by(Payment.entry_type, Payment.payment_method),
             date_from,
             date_to,
         )
@@ -80,17 +78,18 @@ class FinanceService:
         row = self.session.exec(stmt).one()
         return row.cnt or 0, row.deposit_sum or 0
 
-    def _get_by_user(self, date_from, date_to) -> List[UserBreakdown]:
+    def _get_by_user(self, date_from, date_to) -> list[UserBreakdown]:
         stmt = self._apply_date_filter(
             select(
                 User.id.label("user_id"),
                 User.username,
                 func.sum(Payment.amount).label("total_income"),
                 func.count(distinct(Order.id)).label("order_count"),
-            ).join(Order, Payment.order_id == Order.id).join(
-                User, Order.created_by_user_id == User.id).where(
-                    Payment.entry_type == PaymentType.PAYMENT).group_by(
-                        User.id, User.username),
+            )
+            .join(Order, Payment.order_id == Order.id)
+            .join(User, Order.created_by_user_id == User.id)
+            .where(Payment.entry_type == PaymentType.PAYMENT)
+            .group_by(User.id, User.username),
             date_from,
             date_to,
         )
@@ -100,10 +99,11 @@ class FinanceService:
                 username=row.username,
                 total_income=row.total_income or 0,
                 order_count=row.order_count or 0,
-            ) for row in self.session.exec(stmt).all()
+            )
+            for row in self.session.exec(stmt).all()
         ]
 
-    def _get_payment_records(self, date_from, date_to) -> List[PaymentRecord]:
+    def _get_payment_records(self, date_from, date_to) -> list[PaymentRecord]:
         stmt = self._apply_date_filter(
             select(
                 Order.start_time.label("date"),
@@ -112,9 +112,10 @@ class FinanceService:
                 Payment.entry_type,
                 Payment.payment_method,
                 User.username,
-            ).join(Order, Payment.order_id == Order.id).join(
-                User, Order.created_by_user_id == User.id).order_by(
-                    Order.start_time.desc()),
+            )
+            .join(Order, Payment.order_id == Order.id)
+            .join(User, Order.created_by_user_id == User.id)
+            .order_by(Order.start_time.desc()),
             date_from,
             date_to,
         )
@@ -126,17 +127,18 @@ class FinanceService:
                 entry_type=row.entry_type,
                 payment_method=row.payment_method,
                 username=row.username,
-            ) for row in self.session.exec(stmt).all()
+            )
+            for row in self.session.exec(stmt).all()
         ]
 
-    def get_summary(self,
-                    date_from: Optional[date] = None,
-                    date_to: Optional[date] = None) -> FinanceSummary:
+    def get_summary(
+        self, date_from: date | None = None, date_to: date | None = None
+    ) -> FinanceSummary:
         total_rent, total_deposits, by_method = self._get_payment_totals(
-            date_from, date_to)
+            date_from, date_to
+        )
         order_count, average_check = self._get_order_stats(date_from, date_to)
-        returned_count, deposit_returned = self._get_returned_stats(
-            date_from, date_to)
+        returned_count, deposit_returned = self._get_returned_stats(date_from, date_to)
 
         return FinanceSummary(
             date_from=date_from,

@@ -1,13 +1,19 @@
 from uuid import UUID
-from typing import List, Optional
-from sqlmodel import select
+
+from core.database import (
+    SessionDep,
+    create_user,
+    get_user_by_email,
+    get_user_by_username,
+    hash_password,
+)
+from core.exceptions import ConflictException
 
 # --- Project Imports ---
-from core.query_utils import apply_sorting
 from core.logger import logger
-from core.exceptions import ConflictException, NotFoundException
+from core.query_gateway import QueryGateway
 from models.user import User, UserCreate, UserFilters, UserUpdate
-from core.database import SessionDep, get_total_count, create_user, get_user_by_username, get_user_by_email, hash_password
+from services.user_query_gateway import UserQueryGateway
 
 
 class UserService:
@@ -15,51 +21,30 @@ class UserService:
 
     def __init__(self, session: SessionDep):
         self.session = session
+        self.query_gateway: QueryGateway[User, UserFilters] = UserQueryGateway(session)
 
-    def _apply_filters(self, stmt, filters: UserFilters):
-        """Apply user filters to the query statement"""
-        if filters.id:
-            if isinstance(filters.id, list):
-                stmt = stmt.where(User.id.in_(filters.id))
-            else:
-                stmt = stmt.where(User.id.contains(filters.id))
-
-        if filters.is_external is not None:
-            stmt = stmt.where(User.is_external == filters.is_external)
-
-        if filters.is_active is not None:
-            stmt = stmt.where(User.is_active == filters.is_active)
-
-        if filters.is_superuser is not None:
-            stmt = stmt.where(User.is_superuser == filters.is_superuser)
-
-        return stmt.distinct()
-
-    def get_by_id(self, user_id: UUID) -> Optional[User]:
+    def get_by_id(self, user_id: UUID) -> User | None:
         """Get a specific user by ID"""
         logger.debug(f"Fetching user by ID: {user_id}")
-        return self.session.get(User, user_id)
+        return self.query_gateway.get_by_id(user_id)
 
-    def get_users(self,
-                  filters: UserFilters,
-                  offset: int = 0,
-                  limit: int = 100,
-                  sort_field: str = "id",
-                  sort_order: str = "ASC") -> tuple[List[User], int]:
+    def get_users(
+        self,
+        filters: UserFilters,
+        offset: int = 0,
+        limit: int = 100,
+        sort_field: str = "id",
+        sort_order: str = "ASC",
+    ) -> tuple[list[User], int]:
         """Get filtered and paginated users with total count"""
         logger.debug("Fetching users")
-
-        stmt = select(User)
-        stmt = self._apply_filters(stmt, filters)
-        stmt = apply_sorting(stmt, User, sort_field, sort_order)
-
-        # Get total count before pagination
-        total = get_total_count(self.session, stmt)
-
-        stmt = stmt.offset(offset).limit(limit)
-        users = self.session.exec(stmt).all()
-
-        return users, total
+        return self.query_gateway.list(
+            filters=filters,
+            offset=offset,
+            limit=limit,
+            sort_field=sort_field,
+            sort_order=sort_order,
+        )
 
     def create(self, user_in: UserCreate) -> User:
         """Create a new user"""
@@ -68,8 +53,7 @@ class UserService:
         # Check if user already exists
         if get_user_by_username(self.session, user_in.username):
             logger.warning(f"Username already exists: {user_in.username}")
-            raise ConflictException(
-                f"Username '{user_in.username}' already exists")
+            raise ConflictException(f"Username '{user_in.username}' already exists")
 
         if get_user_by_email(self.session, user_in.email):
             logger.warning(f"Email already exists: {user_in.email}")
@@ -87,24 +71,24 @@ class UserService:
 
         # Hash any incoming password before persisting
         if update_data.get("password"):
-            update_data["hashed_password"] = hash_password(
-                update_data.pop("password"))
+            update_data["hashed_password"] = hash_password(update_data.pop("password"))
         else:
             update_data.pop("password", None)
 
         # Uniqueness checks for changed fields
         if "username" in update_data:
-            existing = get_user_by_username(self.session,
-                                            update_data["username"])
+            existing = get_user_by_username(self.session, update_data["username"])
             if existing and existing.id != user.id:
                 raise ConflictException(
-                    f"Username '{update_data['username']}' already exists")
+                    f"Username '{update_data['username']}' already exists"
+                )
 
         if "email" in update_data:
             existing = get_user_by_email(self.session, update_data["email"])
             if existing and existing.id != user.id:
                 raise ConflictException(
-                    f"Email '{update_data['email']}' already exists")
+                    f"Email '{update_data['email']}' already exists"
+                )
 
         for field, value in update_data.items():
             setattr(user, field, value)

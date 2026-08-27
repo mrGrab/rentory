@@ -1,9 +1,11 @@
 from datetime import date, datetime
+
 from core.exceptions import BadRequestException
 
 
-def validate_time_period(start: date | datetime | None,
-                         end: date | datetime | None) -> None:
+def validate_time_period(
+    start: date | datetime | None, end: date | datetime | None
+) -> None:
     """
     Validate that both start and end dates/times are provided and logically ordered.
 

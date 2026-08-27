@@ -1,15 +1,16 @@
 import io
 from pathlib import Path
-from uuid import uuid4
-from fastapi import APIRouter, UploadFile, File, status
 from typing import Annotated
+from uuid import uuid4
+
+from fastapi import APIRouter, File, UploadFile, status
 from PIL import Image, ImageOps
 
 # --- Project Imports ---
 from core.config import settings
-from core.logger import logger
 from core.dependencies import CurrentUser
 from core.exceptions import BadRequestException, InternalErrorException
+from core.logger import logger
 
 # --- Configuration ---
 # Keep settings centralized for clarity
@@ -38,11 +39,11 @@ def create_thumbnail(image_data: bytes, output_path: Path) -> dict:
             img = ImageOps.exif_transpose(img)
 
             # Convert to RGB, handling transparency by pasting on a white background
-            if img.mode != 'RGB':
-                background = Image.new('RGB', img.size, "white")
+            if img.mode != "RGB":
+                background = Image.new("RGB", img.size, "white")
                 # Paste the image using its alpha channel as a mask if it exists
-                if 'A' in img.getbands():
-                    background.paste(img, mask=img.getchannel('A'))
+                if "A" in img.getbands():
+                    background.paste(img, mask=img.getchannel("A"))
                 else:
                     background.paste(img)
                 img = background
@@ -53,36 +54,38 @@ def create_thumbnail(image_data: bytes, output_path: Path) -> dict:
             # Ensure the target directory exists before saving
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            img.save(output_path,
-                     format="JPEG",
-                     quality=DEFAULT_JPEG_QUALITY,
-                     optimize=True,
-                     progressive=True)
+            img.save(
+                output_path,
+                format="JPEG",
+                quality=DEFAULT_JPEG_QUALITY,
+                optimize=True,
+                progressive=True,
+            )
 
             return {
                 "original_size": {
                     "width": original_size[0],
-                    "height": original_size[1]
+                    "height": original_size[1],
                 },
-                "thumbnail_size": {
-                    "width": img.width,
-                    "height": img.height
-                },
+                "thumbnail_size": {"width": img.width, "height": img.height},
                 "file_size": output_path.stat().st_size,
             }
     except Exception as e:
         logger.error(f"Thumbnail creation failed unexpectedly: {e}")
         raise InternalErrorException(
-            "An unexpected error occurred while processing the image.")
+            "An unexpected error occurred while processing the image."
+        )
 
 
 @router.post(
     "/image",
     summary="Upload and process an image",
     description="Upload an image, which will be converted to a JPEG thumbnail.",
-    status_code=status.HTTP_201_CREATED)
-async def upload_image(current_user: CurrentUser, image: Annotated[UploadFile,
-                                                                   File(...)]):
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_image(
+    current_user: CurrentUser, image: Annotated[UploadFile, File(...)]
+):
     """
     Handles the image upload process:
     1. Validates the file type and size.
@@ -96,14 +99,15 @@ async def upload_image(current_user: CurrentUser, image: Annotated[UploadFile,
     if not image.content_type or not image.content_type.startswith("image/"):
         raise BadRequestException("File must be an image.")
 
-    file_ext = Path(image.filename).suffix.lower().lstrip('.')
+    file_ext = Path(image.filename).suffix.lower().lstrip(".")
     if file_ext not in SUPPORTED_EXTENSIONS:
         raise BadRequestException(f"Unsupported image type: '{file_ext}'.")
 
     image_data = await image.read()
     if len(image_data) > MAX_FILE_SIZE_BYTES:
         raise BadRequestException(
-            f"File is too large. Maximum size is {MAX_FILE_SIZE_MB}MB.")
+            f"File is too large. Maximum size is {MAX_FILE_SIZE_MB}MB."
+        )
 
     # --- 2. Processing & Saving ---
     # Generate a secure, unique filename. We always save as .jpg.
@@ -119,5 +123,5 @@ async def upload_image(current_user: CurrentUser, image: Annotated[UploadFile,
     return {
         "message": "Image uploaded successfully.",
         "image_url": f"/static/images/{new_filename}",
-        "details": processing_info
+        "details": processing_info,
     }

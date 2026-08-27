@@ -1,9 +1,9 @@
 from uuid import UUID
-from typing import Optional, List
+
 from pydantic import EmailStr
 from sqlmodel import Field, SQLModel
 
-from models.common import UUIDMixin, TimestampMixin
+from models.common import TimestampMixin, UUIDMixin
 
 # ---------- Base Schemas ----------
 
@@ -11,7 +11,7 @@ from models.common import UUIDMixin, TimestampMixin
 class UserBase(SQLModel):
     username: str = Field(index=True, max_length=255)
     email: EmailStr = Field(index=True, max_length=255)
-    avatar: Optional[str] = Field(default=None, max_length=512)
+    avatar: str | None = Field(default=None, max_length=512)
 
 
 # ---------- Database Model ----------
@@ -30,31 +30,31 @@ class User(UserBase, UUIDMixin, TimestampMixin, table=True):
 
 
 class UserCreate(UserBase):
-    password: Optional[str] = Field(min_length=8, max_length=40)
+    password: str | None = Field(min_length=8, max_length=40)
     is_external: bool = Field(default=False)
 
 
 class UserRegister(SQLModel):
     username: str = Field(max_length=255)
     email: EmailStr = Field(max_length=255)
-    avatar: Optional[str] = Field(default=None, max_length=512)
+    avatar: str | None = Field(default=None, max_length=512)
     password: str = Field(min_length=8, max_length=40)
     is_external: bool = Field(default=False)
 
 
 class UserUpdate(SQLModel):
-    username: Optional[str] = Field(default=None, max_length=255)
-    email: Optional[EmailStr] = Field(default=None, max_length=255)
-    avatar: Optional[str] = Field(default=None, max_length=512)
-    password: Optional[str] = Field(default=None, min_length=8, max_length=40)
-    is_superuser: Optional[bool] = None
-    is_active: Optional[bool] = None
-    is_external: Optional[bool] = None
+    username: str | None = Field(default=None, max_length=255)
+    email: EmailStr | None = Field(default=None, max_length=255)
+    avatar: str | None = Field(default=None, max_length=512)
+    password: str | None = Field(default=None, min_length=8, max_length=40)
+    is_superuser: bool | None = None
+    is_active: bool | None = None
+    is_external: bool | None = None
 
 
 class UserUpdateMe(SQLModel):
-    email: Optional[EmailStr] = Field(default=None, max_length=255)
-    avatar: Optional[str] = Field(default=None, max_length=512)
+    email: EmailStr | None = Field(default=None, max_length=255)
+    avatar: str | None = Field(default=None, max_length=512)
 
 
 class UpdatePassword(SQLModel):
@@ -70,12 +70,12 @@ class UserPublic(UserBase):
 
 
 class UsersPublic(SQLModel):
-    data: List[UserPublic]
+    data: list[UserPublic]
     total: int
 
 
 class UserFilters(SQLModel):
-    id: Optional[List[UUID]] = None
-    is_active: Optional[bool] = None
-    is_superuser: Optional[bool] = None
-    is_external: Optional[bool] = None
+    id: list[UUID] | None = None
+    is_active: bool | None = None
+    is_superuser: bool | None = None
+    is_external: bool | None = None

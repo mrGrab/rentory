@@ -2,19 +2,15 @@
 This module defines custom, reusable exception classes
 to ensure consistent error responses.
 """
+
 from fastapi import HTTPException, status
 
 
 class AppException(HTTPException):
     """Base exception class to ensure consistent error responses."""
 
-    def __init__(self,
-                 status_code: int,
-                 detail: str,
-                 headers: dict | None = None):
-        super().__init__(status_code=status_code,
-                         detail=detail,
-                         headers=headers)
+    def __init__(self, status_code: int, detail: str, headers: dict | None = None):
+        super().__init__(status_code=status_code, detail=detail, headers=headers)
 
 
 class BadRequestException(AppException):
@@ -39,8 +35,8 @@ class PermissionException(AppException):
     """Exception for HTTP 403 Forbidden errors."""
 
     def __init__(
-            self,
-            detail: str = "You do not have permission to perform this action"):
+        self, detail: str = "You do not have permission to perform this action"
+    ):
         super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
@@ -62,5 +58,6 @@ class InternalErrorException(AppException):
     """Exception for HTTP 500 Internal Server Error."""
 
     def __init__(self, detail: str = "An unexpected internal error occurred"):
-        super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                         detail=detail)
+        super().__init__(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail
+        )

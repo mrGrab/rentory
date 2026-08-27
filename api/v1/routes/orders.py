@@ -1,24 +1,26 @@
 from io import BytesIO
-from typing import Annotated, List
-from fastapi import APIRouter, Response, status, Depends, Query
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
+
+from core.database import SessionDep
+from core.dependencies import CurrentSuperuser, CurrentUser
+from core.exceptions import NotFoundException
+from core.logger import logger
+from core.query_utils import calculate_pagination, parse_params, set_pagination_headers
+from models.order import (
+    Order,
+    OrderCreate,
+    OrderFilters,
+    OrderItemPublicInfo,
+    OrderPublic,
+    OrderUpdate,
+)
+from models.payment import PaymentPublic
 
 # --- Project Imports ---
 from services.order_service import OrderService
-from core.logger import logger
-from core.dependencies import CurrentUser, CurrentSuperuser
-from core.database import SessionDep
-from core.exceptions import NotFoundException
-from core.query_utils import parse_params, calculate_pagination, set_pagination_headers
-from models.payment import PaymentPublic
-from models.order import (
-    Order,
-    OrderPublic,
-    OrderCreate,
-    OrderFilters,
-    OrderUpdate,
-    OrderItemPublicInfo,
-)
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -31,9 +33,8 @@ def get_order_service(session: SessionDep) -> OrderService:
 
 
 def get_order_or_404(
-        order_id: int,
-        service: Annotated[OrderService,
-                           Depends(get_order_service)]) -> Order:
+    order_id: int, service: Annotated[OrderService, Depends(get_order_service)]
+) -> Order:
     """Dependency to retrieve an order by ID or raise NotFoundException"""
     order = service.get_by_id(order_id)
     if not order:
@@ -48,42 +49,38 @@ def to_public(order: Order) -> OrderPublic:
     items = []
     for link in order.item_links:
         variant = link.item_variant
-        item_info = OrderItemPublicInfo(item_id=variant.item_id,
-                                        item_variant_id=link.item_variant_id,
-                                        title=variant.item.title,
-                                        size=variant.size,
-                                        color=variant.color,
-                                        quantity=link.quantity,
-                                        price=link.price,
-                                        deposit=link.deposit)
+        item_info = OrderItemPublicInfo(
+            item_id=variant.item_id,
+            item_variant_id=link.item_variant_id,
+            title=variant.item.title,
+            size=variant.size,
+            color=variant.color,
+            quantity=link.quantity,
+            price=link.price,
+            deposit=link.deposit,
+        )
         items.append(item_info)
 
     # Transform payments
-    payments = [
-        PaymentPublic.model_validate(payment) for payment in order.payments
-    ]
+    payments = [PaymentPublic.model_validate(payment) for payment in order.payments]
 
-    return OrderPublic.model_validate(order,
-                                      update={
-                                          "items": items,
-                                          "payments": payments
-                                      })
+    return OrderPublic.model_validate(
+        order, update={"items": items, "payments": payments}
+    )
 
 
 # ---------- Route Handlers ----------
 
 
-@router.get("",
-            response_model=List[OrderPublic],
-            summary="List orders with pagination")
+@router.get("", response_model=list[OrderPublic], summary="List orders with pagination")
 def list_orders(
-        response: Response,
-        current_user: CurrentUser,
-        service: Annotated[OrderService,
-                           Depends(get_order_service)],
-        filter_: Annotated[str, Query(alias="filter")] = "{}",
-        range_: Annotated[str, Query(alias="range")] = "[0, 500]",
-        sort: Annotated[str, Query(alias="sort")] = '["created_at", "DESC"]'):
+    response: Response,
+    current_user: CurrentUser,
+    service: Annotated[OrderService, Depends(get_order_service)],
+    filter_: Annotated[str, Query(alias="filter")] = "{}",
+    range_: Annotated[str, Query(alias="range")] = "[0, 500]",
+    sort: Annotated[str, Query(alias="sort")] = '["created_at", "DESC"]',
+):
     """List orders with filtering, sorting, and pagination"""
 
     logger.debug(f"User {current_user.username} listing orders")
@@ -94,35 +91,42 @@ def list_orders(
     offset, limit = calculate_pagination(params.range_list)
 
     # Fetch orders
-    orders, total = service.get_orders(filters=filters,
-                                       offset=offset,
-                                       limit=limit,
-                                       sort_field=params.sort_field,
-                                       sort_order=params.sort_order)
+    orders, total = service.get_orders(
+        filters=filters,
+        offset=offset,
+        limit=limit,
+        sort_field=params.sort_field,
+        sort_order=params.sort_order,
+    )
 
     # Transform to public schema
     result = [to_public(order) for order in orders]
 
     # Set pagination headers
-    set_pagination_headers(response=response,
-                           count=len(result),
-                           total=total,
-                           offset=offset,
-                           resource_name="orders")
+    set_pagination_headers(
+        response=response,
+        count=len(result),
+        total=total,
+        offset=offset,
+        resource_name="orders",
+    )
 
-    logger.info(
-        f"User {current_user.username} retrieved {len(result)}/{total} orders")
+    logger.info(f"User {current_user.username} retrieved {len(result)}/{total} orders")
     return result
 
 
-@router.post("",
-             response_model=OrderPublic,
-             status_code=status.HTTP_201_CREATED,
-             summary="Create a new order",
-             description="Create a new order and link it to item variants")
-def create_order(order_in: OrderCreate, current_user: CurrentUser,
-                 service: Annotated[OrderService,
-                                    Depends(get_order_service)]):
+@router.post(
+    "",
+    response_model=OrderPublic,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new order",
+    description="Create a new order and link it to item variants",
+)
+def create_order(
+    order_in: OrderCreate,
+    current_user: CurrentUser,
+    service: Annotated[OrderService, Depends(get_order_service)],
+):
     """Create a new order"""
     logger.debug(f"User {current_user.username} creating new order")
 
@@ -134,13 +138,16 @@ def create_order(order_in: OrderCreate, current_user: CurrentUser,
     return to_public(order)
 
 
-@router.get("/{order_id}/invoice",
-            summary="Generate invoice PDF",
-            description="Generate and download invoice PDF for an order")
-def generate_invoice(current_user: CurrentUser,
-                     order: Annotated[Order, Depends(get_order_or_404)],
-                     service: Annotated[OrderService,
-                                        Depends(get_order_service)]):
+@router.get(
+    "/{order_id}/invoice",
+    summary="Generate invoice PDF",
+    description="Generate and download invoice PDF for an order",
+)
+def generate_invoice(
+    current_user: CurrentUser,
+    order: Annotated[Order, Depends(get_order_or_404)],
+    service: Annotated[OrderService, Depends(get_order_service)],
+):
     """Generate invoice PDF for an order"""
     logger.debug(
         f"User {current_user.username} generating invoice for order {order.id}"
@@ -150,33 +157,65 @@ def generate_invoice(current_user: CurrentUser,
 
     logger.info(f"Invoice generated for order {order.id}")
 
-    return StreamingResponse(BytesIO(pdf_bytes),
-                             media_type="application/pdf",
-                             headers={
-                                 "Content-Disposition":
-                                 f"attachment; filename=invoice_{order.id}.pdf"
-                             })
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=invoice_{order.id}.pdf"},
+    )
 
 
-@router.get("/{order_id}",
-            response_model=OrderPublic,
-            summary="Get order by ID",
-            description="Retrieve details of a specific order by its ID")
-def get_order(current_user: CurrentUser,
-              order: Annotated[Order, Depends(get_order_or_404)]):
+@router.get(
+    "/{order_id}/invoice/jpeg",
+    summary="Generate invoice JPEG",
+    description="Generate and download the complete invoice as one tall JPEG",
+)
+def generate_invoice_jpeg(
+    current_user: CurrentUser,
+    order: Annotated[Order, Depends(get_order_or_404)],
+    service: Annotated[OrderService, Depends(get_order_service)],
+):
+    """Generate a complete invoice JPEG for an order."""
+    logger.debug(
+        f"User {current_user.username} generating invoice JPEG for order {order.id}"
+    )
+
+    jpeg_bytes = service.generate_invoice_jpeg(order)
+
+    logger.info(f"Invoice JPEG generated for order {order.id}")
+
+    return StreamingResponse(
+        BytesIO(jpeg_bytes),
+        media_type="image/jpeg",
+        headers={"Content-Disposition": f"attachment; filename=invoice_{order.id}.jpg"},
+    )
+
+
+@router.get(
+    "/{order_id}",
+    response_model=OrderPublic,
+    summary="Get order by ID",
+    description="Retrieve details of a specific order by its ID",
+)
+def get_order(
+    current_user: CurrentUser, order: Annotated[Order, Depends(get_order_or_404)]
+):
     """Get a specific order by ID"""
     logger.debug(f"User {current_user.username} fetching order {order.id}")
     return to_public(order)
 
 
-@router.put("/{order_id}",
-            response_model=OrderPublic,
-            summary="Update order",
-            description="Update an existing order by its ID")
-def update_order(order_in: OrderUpdate, current_user: CurrentUser,
-                 order: Annotated[Order, Depends(get_order_or_404)],
-                 service: Annotated[OrderService,
-                                    Depends(get_order_service)]):
+@router.put(
+    "/{order_id}",
+    response_model=OrderPublic,
+    summary="Update order",
+    description="Update an existing order by its ID",
+)
+def update_order(
+    order_in: OrderUpdate,
+    current_user: CurrentUser,
+    order: Annotated[Order, Depends(get_order_or_404)],
+    service: Annotated[OrderService, Depends(get_order_service)],
+):
     """Update an existing order"""
     logger.info(f"User {current_user.username} updating order {order.id}")
 
@@ -186,14 +225,17 @@ def update_order(order_in: OrderUpdate, current_user: CurrentUser,
     return to_public(updated_order)
 
 
-@router.delete("/{order_id}",
-               status_code=status.HTTP_200_OK,
-               summary="Delete order",
-               description="Delete an order by ID (superuser only)")
-def delete_order(current_user: CurrentSuperuser,
-                 order: Annotated[Order, Depends(get_order_or_404)],
-                 service: Annotated[OrderService,
-                                    Depends(get_order_service)]):
+@router.delete(
+    "/{order_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete order",
+    description="Delete an order by ID (superuser only)",
+)
+def delete_order(
+    current_user: CurrentSuperuser,
+    order: Annotated[Order, Depends(get_order_or_404)],
+    service: Annotated[OrderService, Depends(get_order_service)],
+):
     """Delete an order (superuser only)"""
     logger.debug(f"User {current_user.username} deleting order {order.id}")
 

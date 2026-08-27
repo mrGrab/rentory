@@ -1,18 +1,20 @@
 # FastAPI dependencies
 
 # --- Core Imports ---
-from typing import Annotated, TypeAlias
+from typing import Annotated
+
 from fastapi import Depends
+
+from core.auth import decode_token, oauth2_scheme
+from core.config import settings
+from core.database import SessionDep, get_user_by_username
+from core.exceptions import AuthenticationException, PermissionException
 
 # --- Project Imports ---
 from core.logger import logger
-from core.config import settings
-from core.database import SessionDep, get_user_by_username
-from core.auth import oauth2_scheme, decode_token
 from models.user import User
-from core.exceptions import AuthenticationException, PermissionException
 
-TokenDep: TypeAlias = Annotated[str, Depends(oauth2_scheme)]
+type TokenDep = Annotated[str, Depends(oauth2_scheme)]
 
 
 # ================================================================================
@@ -32,9 +34,11 @@ def get_current_user(session: SessionDep, token: TokenDep) -> User:
     user = get_user_by_username(session, username)
     if not user:
         logger.warning(
-            f"Authentication failed: user '{username}' from token not found.")
+            f"Authentication failed: user '{username}' from token not found."
+        )
         raise AuthenticationException(
-            "User associated with this token no longer exists")
+            "User associated with this token no longer exists"
+        )
 
     if not user.is_active:
         logger.warning(f"Permission denied: user '{username}' is inactive.")
@@ -45,7 +49,8 @@ def get_current_user(session: SessionDep, token: TokenDep) -> User:
 
 
 def get_current_superuser(
-        current_user: Annotated[User, Depends(get_current_user)]) -> User:
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
     """
     Dependency that requires the current user to be a superuser.
     Builds upon `get_current_user`.
@@ -61,5 +66,5 @@ def get_current_superuser(
 # ================================================================================
 #  Combined Dependency Annotations for API Routes
 # ================================================================================
-CurrentUser: TypeAlias = Annotated[User, Depends(get_current_user)]
-CurrentSuperuser: TypeAlias = Annotated[User, Depends(get_current_superuser)]
+type CurrentUser = Annotated[User, Depends(get_current_user)]
+type CurrentSuperuser = Annotated[User, Depends(get_current_superuser)]

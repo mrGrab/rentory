@@ -1,8 +1,9 @@
-from uuid import UUID
-from enum import Enum
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
-from sqlmodel import Field, SQLModel, Relationship
+from enum import Enum
+from typing import TYPE_CHECKING, Optional
+from uuid import UUID
+
+from sqlmodel import Field, Relationship, SQLModel
 
 from models.common import TimestampMixin, UUIDMixin
 
@@ -30,21 +31,21 @@ class Payment(TimestampMixin, UUIDMixin, SQLModel, table=True):
     amount: int = Field(ge=0)
     payment_method: PaymentMethod = Field(max_length=20)
     entry_type: PaymentType = Field(max_length=20)
-    note: Optional[str] = Field(default=None, max_length=512)
+    note: str | None = Field(default=None, max_length=512)
     order_id: int = Field(foreign_key="order.id", index=True)
-
-    order: Optional["Order"] = Relationship(back_populates="payments")
+    # Quoted Optional (not X | None) required for SQLAlchemy relationship resolution
+    order: Optional["Order"] = Relationship(back_populates="payments")  # noqa: UP037, UP045
 
 
 # ---------- API Schemas ----------
 
 
 class PaymentBase(SQLModel):
-    id: Optional[UUID] = None
+    id: UUID | None = None
     amount: int = Field(ge=0)
     payment_method: PaymentMethod
     entry_type: PaymentType
-    note: Optional[str] = None
+    note: str | None = None
 
 
 class PaymentPublic(PaymentBase):

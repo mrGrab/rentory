@@ -20,10 +20,8 @@ LOGGING_CONFIG = {
             "use_colors": None,
         },
         "access": {
-            "()":
-                "uvicorn.logging.AccessFormatter",
-            "fmt":
-                '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',  # noqa: E501
+            "()": "uvicorn.logging.AccessFormatter",
+            "fmt": '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
         },
         "journal": {
             "()": "logging.Formatter",
@@ -48,19 +46,9 @@ LOGGING_CONFIG = {
         },
     },
     "loggers": {
-        "uvicorn": {
-            "handlers": ["default"],
-            "level": "INFO",
-            "propagate": False
-        },
-        "uvicorn.error": {
-            "level": "INFO"
-        },
-        "uvicorn.access": {
-            "handlers": ["access"],
-            "level": "INFO",
-            "propagate": False
-        },
+        "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+        "uvicorn.error": {"level": "INFO"},
+        "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
     },
 }
 

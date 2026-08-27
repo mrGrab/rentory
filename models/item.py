@@ -1,15 +1,19 @@
-from uuid import UUID
 from enum import Enum
-from typing import Optional, List, TYPE_CHECKING
-from sqlmodel import Field, SQLModel, Relationship, Column, JSON
+from typing import TYPE_CHECKING
+from uuid import UUID
 
-from models.common import UUIDMixin, TimestampMixin
+from sqlmodel import JSON, Column, Field, Relationship, SQLModel
+
+from models.common import TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
-    from models.item_variant import (ItemVariant, ItemVariantUpdate,
-                                     ItemVariantBase,
-                                     ItemVariantPublicInternal,
-                                     ItemVariantStatus)
+    from models.item_variant import (
+        ItemVariant,
+        ItemVariantBase,
+        ItemVariantPublicInternal,
+        ItemVariantStatus,
+        ItemVariantUpdate,
+    )
 
 # ---------- ENUMS ----------
 
@@ -24,15 +28,16 @@ class ItemStatus(str, Enum):
 
 class Item(UUIDMixin, TimestampMixin, table=True):
     title: str = Field(index=True, unique=True, max_length=255)
-    category: Optional[str] = Field(default=None, index=True, max_length=100)
-    description: Optional[str] = Field(default=None, max_length=512)
-    image_url: Optional[str] = Field(default=None, max_length=512)
+    category: str | None = Field(default=None, index=True, max_length=100)
+    description: str | None = Field(default=None, max_length=512)
+    image_url: str | None = Field(default=None, max_length=512)
     status: ItemStatus = Field(default=ItemStatus.IN_STOCK, index=True)
     is_archived: bool = Field(default=False, index=True)
-    tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
 
-    variants: List["ItemVariant"] = Relationship(back_populates="item",
-                                                 cascade_delete=True)
+    variants: list[ItemVariant] = Relationship(
+        back_populates="item", cascade_delete=True
+    )
 
 
 # ---------- API Schemas ----------
@@ -40,44 +45,46 @@ class Item(UUIDMixin, TimestampMixin, table=True):
 
 class ItemBase(SQLModel):
     title: str = Field(max_length=255)
-    category: Optional[str] = Field(default=None, max_length=100)
-    description: Optional[str] = Field(default=None, max_length=512)
-    image_url: Optional[str] = Field(default=None, max_length=512)
+    category: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=512)
+    image_url: str | None = Field(default=None, max_length=512)
     status: ItemStatus = ItemStatus.IN_STOCK
-    tags: List[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
 
 
 class ItemCreate(ItemBase):
     """Used when creating a new item"""
-    variants: Optional[List["ItemVariantBase"]] = Field(default_factory=list)
+
+    variants: list[ItemVariantBase] | None = Field(default_factory=list)
 
 
 class ItemUpdate(SQLModel):
     """Partial update for existing item"""
-    title: Optional[str] = Field(default=None, max_length=255)
-    category: Optional[str] = Field(default=None, max_length=100)
-    description: Optional[str] = Field(default=None, max_length=512)
-    image_url: Optional[str] = Field(default=None, max_length=512)
-    status: Optional[ItemStatus] = None
-    tags: Optional[List[str]] = None
-    variants: Optional[List["ItemVariantUpdate"]] = Field(default_factory=list)
-    is_archived: Optional[bool] = None
+
+    title: str | None = Field(default=None, max_length=255)
+    category: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=512)
+    image_url: str | None = Field(default=None, max_length=512)
+    status: ItemStatus | None = None
+    tags: list[str] | None = None
+    variants: list[ItemVariantUpdate] | None = Field(default_factory=list)
+    is_archived: bool | None = None
 
 
 class ItemPublic(ItemBase):
     id: UUID
-    variants: List["ItemVariantPublicInternal"] = Field(default_factory=list)
-    order_ids: List[int] = Field(default_factory=list)
+    variants: list[ItemVariantPublicInternal] = Field(default_factory=list)
+    order_ids: list[int] = Field(default_factory=list)
 
 
 class ItemFilters(SQLModel):
-    id: Optional[List[UUID]] = None
-    title: Optional[str] = None
-    category: Optional[str] = None
-    status: Optional[ItemStatus] = None
-    size: Optional[str] = None
-    color: Optional[str] = None
-    variant_status: Optional["ItemVariantStatus"] = None
-    tag: Optional[str] = None
-    q: Optional[str] = None
-    is_archived: Optional[bool] = None
+    id: list[UUID] | None = None
+    title: str | None = None
+    category: str | None = None
+    status: ItemStatus | None = None
+    size: str | None = None
+    color: str | None = None
+    variant_status: ItemVariantStatus | None = None
+    tag: str | None = None
+    q: str | None = None
+    is_archived: bool | None = None

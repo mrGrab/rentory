@@ -1,16 +1,15 @@
-from typing import Optional
 from sqlmodel import Field, SQLModel
 
 
 class Token(SQLModel):
     access_token: str
     token_type: str = "bearer"
-    refresh_token: Optional[str] = None
+    refresh_token: str | None = None
 
 
 class TokenPayload(SQLModel):
     sub: str | None = None
-    exp: Optional[int] = None
+    exp: int | None = None
 
 
 class NewPassword(SQLModel):

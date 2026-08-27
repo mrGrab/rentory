@@ -1,20 +1,17 @@
+from datetime import UTC, datetime
 from uuid import UUID
-from datetime import datetime, timezone, date
-from typing import List, Optional
-from sqlmodel import select, func
-from sqlalchemy.orm import selectinload
-from sqlalchemy import text
+
+from sqlmodel import select
 
 # --- Project Imports ---
-from core.query_utils import apply_sorting
-from core.database import get_total_count, SessionDep
+from core.database import SessionDep
+from core.exceptions import BadRequestException, ConflictException
 from core.logger import logger
-from core.exceptions import ConflictException, BadRequestException
+from core.query_gateway import QueryGateway
+from models.item import Item, ItemCreate, ItemFilters, ItemUpdate
+from models.item_variant import ItemVariantCreate, ItemVariantStatus
+from services.item_query_gateway import ItemQueryGateway
 from services.item_variant_service import ItemVariantService
-from models.order import Order
-from models.links import OrderItemLink
-from models.item import Item, ItemCreate, ItemUpdate, ItemFilters
-from models.item_variant import ItemVariantCreate, ItemVariantStatus, ItemVariant
 
 
 class ItemService:
@@ -23,51 +20,16 @@ class ItemService:
     def __init__(self, session: SessionDep):
         self.session = session
         self.variant_service = ItemVariantService(session)
+        self.query_gateway: QueryGateway[Item, ItemFilters] = ItemQueryGateway(session)
 
-    def _apply_filters(self, stmt, filters: ItemFilters):
-        """Applies all filters to the item query statement"""
-
-        # Exclude archived items by default unless explicit filter is provided
-        if filters.is_archived is None:
-            stmt = stmt.where(Item.is_archived == False)
-        else:
-            stmt = stmt.where(Item.is_archived == filters.is_archived)
-
-        # Join ItemVariant if any variant-specific filters are present
-        if any([filters.color, filters.size, filters.variant_status]):
-            stmt = stmt.join(ItemVariant, Item.id == ItemVariant.item_id)
-
-        if filters.id:
-            if isinstance(filters.id, list):
-                stmt = stmt.where(Item.id.in_(filters.id))
-            else:
-                stmt = stmt.where(Item.id.contains(filters.id))
-
-        if filters.title:
-            stmt = stmt.where(Item.title.ilike(f"%{filters.title}%"))
-        if filters.q:
-            stmt = stmt.where(Item.title.ilike(f"%{filters.q}%"))
-
-        if filters.category:
-            stmt = stmt.where(Item.category == filters.category)
-        if filters.status:
-            stmt = stmt.where(Item.status == filters.status.value)
-        if filters.tag:
-            stmt = stmt.where(Item.tags.contains(filters.tag))
-        if filters.color:
-            stmt = stmt.where(ItemVariant.color == filters.color)
-        if filters.size:
-            stmt = stmt.where(ItemVariant.size == filters.size)
-        if filters.variant_status:
-            stmt = stmt.where(ItemVariant.status == filters.variant_status)
-        return stmt.distinct()
-
-    def get_items(self,
-                  filters: ItemFilters,
-                  offset: int = 0,
-                  limit: int = 100,
-                  sort_field: str = "id",
-                  sort_order: str = "DESC") -> tuple[List[Item], int]:
+    def get_items(
+        self,
+        filters: ItemFilters,
+        offset: int = 0,
+        limit: int = 100,
+        sort_field: str = "id",
+        sort_order: str = "DESC",
+    ) -> tuple[list[Item], int]:
         """
         Get filtered and paginated items with total count
 
@@ -82,22 +44,18 @@ class ItemService:
             Tuple of (list of items, total count)
         """
         logger.debug("Fetching items with filters")
-
-        stmt = select(Item)
-        stmt = self._apply_filters(stmt, filters)
-        stmt = apply_sorting(stmt, Item, sort_field, sort_order)
-
-        # Get total count before pagination
-        total = get_total_count(self.session, stmt)
-
-        # Apply pagination
-        stmt = stmt.offset(offset).limit(limit)
-        items = self.session.exec(stmt).all()
+        items, total = self.query_gateway.list(
+            filters=filters,
+            offset=offset,
+            limit=limit,
+            sort_field=sort_field,
+            sort_order=sort_order,
+        )
 
         logger.debug(f"Found {len(items)} items out of {total} total")
         return items, total
 
-    def get_by_id(self, item_id: UUID) -> Optional[Item]:
+    def get_by_id(self, item_id: UUID) -> Item | None:
         """
         Get item by ID
 
@@ -108,7 +66,7 @@ class ItemService:
             Item or None if not found
         """
         logger.debug(f"Fetching item by ID: {item_id}")
-        return self.session.get(Item, item_id)
+        return self.query_gateway.get_by_id(item_id)
 
     def create(self, item_in: ItemCreate) -> Item:
         """
@@ -141,8 +99,9 @@ class ItemService:
         # Create variants if provided
         if item_in.variants:
             for variant_in in item_in.variants:
-                variant_create = ItemVariantCreate(**variant_in.model_dump(),
-                                                   item_id=item.id)
+                variant_create = ItemVariantCreate(
+                    **variant_in.model_dump(), item_id=item.id
+                )
                 self.variant_service.create(variant_create)
 
         self.session.commit()
@@ -168,8 +127,7 @@ class ItemService:
         """
         logger.debug(f"Updating item: {item.id}")
 
-        update_data = item_in.model_dump(exclude={"variants"},
-                                         exclude_unset=True)
+        update_data = item_in.model_dump(exclude={"variants"}, exclude_unset=True)
 
         if not update_data and not item_in.variants:
             logger.warning("No data provided for update")
@@ -193,12 +151,11 @@ class ItemService:
         processed_variant_ids = set()
 
         for variant_in in item_in.variants:
-
             # New variant (no ID)
-            if not hasattr(variant_in, 'id') or not variant_in.id:
+            if not hasattr(variant_in, "id") or not variant_in.id:
                 variant_create = ItemVariantCreate(
-                    item_id=item.id,
-                    **variant_in.model_dump(exclude_unset=True))
+                    item_id=item.id, **variant_in.model_dump(exclude_unset=True)
+                )
                 self.variant_service.create(variant_create)
                 continue
 
@@ -217,7 +174,7 @@ class ItemService:
             logger.debug(f"Deleting variant {variant_id} (not in update list)")
             self.variant_service.delete(existing_variants_map[variant_id])
 
-        item.updated_at = datetime.now(timezone.utc)
+        item.updated_at = datetime.now(UTC)
 
         self.session.add(item)
         self.session.commit()
@@ -239,7 +196,7 @@ class ItemService:
         for variant in item.variants:
             if variant.order_links:
                 item.is_archived = True
-                item.updated_at = datetime.now(timezone.utc)
+                item.updated_at = datetime.now(UTC)
 
                 self.session.add(item)
                 self.session.commit()
@@ -253,32 +210,40 @@ class ItemService:
 
         logger.info(f"Item deleted successfully: {item.id}")
 
-    def check_availability(self,
-                           item: Item,
-                           start_time,
-                           end_time,
-                           exclude_order_id: Optional[int] = None) -> Item:
-        """Check item variant availability for a time period"""
+    def check_availability(
+        self, item: Item, start_time, end_time, exclude_order_id: int | None = None
+    ) -> tuple[Item, dict[UUID, int]]:
+        """Check item variant availability for a time period.
+
+        Returns (item, availability) where availability maps variant id to
+        available_quantity, since that value isn't a persisted model field.
+        """
         if start_time > end_time:
             raise BadRequestException("Start time must be before end time")
 
-        logger.debug(f"Checking availability for item {item.id} "
-                     f"from {start_time} to {end_time}")
+        logger.debug(
+            f"Checking availability for item {item.id} from {start_time} to {end_time}"
+        )
 
         # Update variant availability status
+        availability: dict[UUID, int] = {}
         for variant in item.variants:
-            is_available, reason = self.variant_service.check_availability(
-                variant, start_time, end_time, exclude_order_id)
+            is_available, available_quantity, reason = (
+                self.variant_service.check_availability(
+                    variant, start_time, end_time, exclude_order_id
+                )
+            )
+
+            availability[variant.id] = available_quantity
 
             if not is_available:
                 logger.debug(reason)
                 variant.status = ItemVariantStatus.UNAVAILABLE
 
         logger.info(f"Availability checked for item {item.id}")
-        return item
+        return item, availability
 
-    def get_distinct_field_values(self, model: type,
-                                  field_name: str) -> List[str]:
+    def get_distinct_field_values(self, model: type, field_name: str) -> list[str]:
         """
         Get distinct values for a field (for dropdown options)
 
@@ -289,8 +254,7 @@ class ItemService:
         Returns:
             Sorted list of distinct values
         """
-        logger.debug(
-            f"Fetching distinct {field_name} values from {model.__name__}")
+        logger.debug(f"Fetching distinct {field_name} values from {model.__name__}")
 
         field_attr = getattr(model, field_name)
         stmt = select(field_attr).where(field_attr.is_not(None)).distinct()
@@ -299,6 +263,5 @@ class ItemService:
         # Filter out None and convert to strings
         filtered_results = [result for result in results if result is not None]
 
-        logger.debug(
-            f"Retrieved {len(filtered_results)} distinct {field_name} values")
+        logger.debug(f"Retrieved {len(filtered_results)} distinct {field_name} values")
         return sorted(filtered_results)

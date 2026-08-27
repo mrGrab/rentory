@@ -1,6 +1,6 @@
 from datetime import date
-from typing import Optional, List
-from sqlmodel import SQLModel, Field
+
+from sqlmodel import Field, SQLModel
 
 
 class PaymentMethodBreakdown(SQLModel):
@@ -26,8 +26,8 @@ class PaymentRecord(SQLModel):
 
 
 class FinanceSummary(SQLModel):
-    date_from: Optional[date] = None
-    date_to: Optional[date] = None
+    date_from: date | None = None
+    date_to: date | None = None
     total_rent_received: int = 0
     total_deposits_received: int = 0
     total_collected: int = 0
@@ -35,7 +35,6 @@ class FinanceSummary(SQLModel):
     average_check: int = 0
     returned_order_count: int = 0
     total_deposit_returned: int = 0
-    by_method: PaymentMethodBreakdown = Field(
-        default_factory=PaymentMethodBreakdown)
-    by_user: List[UserBreakdown] = Field(default_factory=list)
-    payments: List[PaymentRecord] = Field(default_factory=list)
+    by_method: PaymentMethodBreakdown = Field(default_factory=PaymentMethodBreakdown)
+    by_user: list[UserBreakdown] = Field(default_factory=list)
+    payments: list[PaymentRecord] = Field(default_factory=list)

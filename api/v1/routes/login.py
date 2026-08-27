@@ -1,35 +1,40 @@
 from typing import Annotated
-from fastapi import Depends, APIRouter, Request
+
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
+from core.auth import auth_service, authenticate_user, decode_token
+
 # --- Project Imports ---
 from core.config import settings
-from core.logger import logger
-from core.dependencies import CurrentUser
 from core.database import SessionDep, get_user_by_username
-from core.auth import auth_service, authenticate_user, decode_token
+from core.dependencies import CurrentUser
 from core.exceptions import AuthenticationException
+from core.logger import logger
 from models.auth import Token
 from models.user import UserCreate
 
 router = APIRouter(tags=["Authentication"])
 
 
-@router.post("/login",
-             summary="User login",
-             description="Authenticate user with username/email and password")
-def login(session: SessionDep, form_data: Annotated[OAuth2PasswordRequestForm,
-                                                    Depends()]) -> Token:
+@router.post(
+    "/login",
+    summary="User login",
+    description="Authenticate user with username/email and password",
+)
+def login(
+    session: SessionDep, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
+) -> Token:
     """
     Authenticates a user with username/email and password.
     Returning a token pair.
     """
     logger.debug(f"Login attempt for: {form_data.username}")
 
-    user = authenticate_user(session,
-                             identifier=form_data.username,
-                             password=form_data.password)
+    user = authenticate_user(
+        session, identifier=form_data.username, password=form_data.password
+    )
     if not user:
         raise AuthenticationException("Incorrect username or password")
 
@@ -45,14 +50,17 @@ def register_user(session: SessionDep, user_data: UserCreate) -> Token:
     return auth_service.generate_token_pair(new_user.username)
 
 
-@router.post("/refresh",
-             summary="Refresh Access Token",
-             description="Exchange refresh token for new access token")
+@router.post(
+    "/refresh",
+    summary="Refresh Access Token",
+    description="Exchange refresh token for new access token",
+)
 def refresh_access_token(session: SessionDep, refresh_token: str) -> Token:
     """Exchanges a valid refresh token for a new token pair."""
     try:
-        token_data = decode_token(token=refresh_token,
-                                  key=settings.REFRESH_TOKEN_SECRET_KEY)
+        token_data = decode_token(
+            token=refresh_token, key=settings.REFRESH_TOKEN_SECRET_KEY
+        )
         user = get_user_by_username(session, token_data.sub)
         if not user:
             raise AuthenticationException("User from token not found")
@@ -65,9 +73,11 @@ def refresh_access_token(session: SessionDep, refresh_token: str) -> Token:
         raise AuthenticationException("Invalid or expired refresh token")
 
 
-@router.get("/google/login",
-            summary="Google OAuth login",
-            description="Initiate Google OAuth authentication flow")
+@router.get(
+    "/google/login",
+    summary="Google OAuth login",
+    description="Initiate Google OAuth authentication flow",
+)
 async def google_login(request: Request):
     """Redirects the user to Google's authentication page."""
     return await auth_service.handle_google_login(request)
@@ -83,16 +93,18 @@ async def google_callback(request: Request, session: SessionDep):
     auth_service.validate_user_is_active(user)
     token_pair = auth_service.generate_token_pair(user.username)
 
-    redirect_url = (f"{settings.FRONTEND_CALLBACK_URL}?"
-                    f"access_token={token_pair.access_token}&"
-                    f"refresh_token={token_pair.refresh_token}")
+    redirect_url = (
+        f"{settings.FRONTEND_CALLBACK_URL}?"
+        f"access_token={token_pair.access_token}&"
+        f"refresh_token={token_pair.refresh_token}"
+    )
     return RedirectResponse(url=redirect_url)
 
 
 @router.post("/logout", summary="User Logout")
 async def logout(request: Request):
     """Provides a conventional endpoint for logging out."""
-    if hasattr(request, 'session') and request.session:
+    if hasattr(request, "session") and request.session:
         request.session.clear()
         logger.info("User session cleared")
     return {"message": "Successfully logged out. Please discard your tokens."}

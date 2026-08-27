@@ -5,15 +5,15 @@ CLI tool for managing application users.
 """
 
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime, timezone
 from uuid import UUID
 
 import click
-from sqlmodel import Session, select
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 from rich.table import Table, box
+from sqlmodel import Session, select
 
 # Add parent directory to PYTHONPATH
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -37,7 +37,6 @@ ERR_USER_NOT_FOUND = "[red]User not found[/red]"
 @click.group()
 def cli() -> None:
     """User management CLI."""
-    pass
 
 
 def _find_user(
@@ -56,7 +55,7 @@ def _find_user(
 
 
 def _touch(user: User) -> None:
-    user.updated_at = datetime.now(timezone.utc)
+    user.updated_at = datetime.now(UTC)
 
 
 def _render_user(user: User) -> Table:
@@ -76,33 +75,36 @@ def _render_user(user: User) -> Table:
 
 
 @cli.command("list")
-@click.option("--active",
-              "is_active",
-              flag_value=True,
-              default=None,
-              help="Show only active users")
-@click.option("--inactive",
-              "is_active",
-              flag_value=False,
-              help="Show only inactive users")
-@click.option("--admin",
-              "is_superuser",
-              flag_value=True,
-              default=None,
-              help="Show only admin users")
-@click.option("--regular",
-              "is_superuser",
-              flag_value=False,
-              help="Show only regular users")
-@click.option("--external",
-              "is_external",
-              flag_value=True,
-              default=None,
-              help="Show only external users")
-@click.option("--internal",
-              "is_external",
-              flag_value=False,
-              help="Show only internal users")
+@click.option(
+    "--active",
+    "is_active",
+    flag_value=True,
+    default=None,
+    help="Show only active users",
+)
+@click.option(
+    "--inactive", "is_active", flag_value=False, help="Show only inactive users"
+)
+@click.option(
+    "--admin",
+    "is_superuser",
+    flag_value=True,
+    default=None,
+    help="Show only admin users",
+)
+@click.option(
+    "--regular", "is_superuser", flag_value=False, help="Show only regular users"
+)
+@click.option(
+    "--external",
+    "is_external",
+    flag_value=True,
+    default=None,
+    help="Show only external users",
+)
+@click.option(
+    "--internal", "is_external", flag_value=False, help="Show only internal users"
+)
 def list_users(
     is_active: bool | None,
     is_superuser: bool | None,
@@ -133,9 +135,14 @@ def list_users(
         table.add_column("External")
 
         for user in users:
-            table.add_row(str(user.id), user.username, user.email,
-                          str(user.is_active), str(user.is_superuser),
-                          str(user.is_external))
+            table.add_row(
+                str(user.id),
+                user.username,
+                user.email,
+                str(user.is_active),
+                str(user.is_superuser),
+                str(user.is_external),
+            )
         console.print(table)
 
 
@@ -145,8 +152,7 @@ def create_new_user() -> None:
     with Session(engine) as session:
         email = Prompt.ask("Enter user email").strip()
         username = Prompt.ask("Enter username").strip()
-        avatar = Prompt.ask("Avatar URL (optional)",
-                            default="").strip() or None
+        avatar = Prompt.ask("Avatar URL (optional)", default="").strip() or None
         is_external = Confirm.ask("Is external user?", default=False)
         is_active = Confirm.ask("Activate immediately?", default=True)
         is_superuser = Confirm.ask("Grant admin rights?", default=False)
@@ -156,8 +162,7 @@ def create_new_user() -> None:
             return
 
         if get_user_by_username(session, username):
-            console.print(
-                f"[red]Username '{username}' is already in use[/red]")
+            console.print(f"[red]Username '{username}' is already in use[/red]")
             return
 
         password = Prompt.ask("Provide password", password=True)
@@ -178,8 +183,7 @@ def create_new_user() -> None:
             session.commit()
             session.refresh(user)
 
-            console.print(
-                f"[green]New user '{username}' successfully created[/green]")
+            console.print(f"[green]New user '{username}' successfully created[/green]")
             console.print(_render_user(user))
         except Exception as e:
             session.rollback()
@@ -187,20 +191,10 @@ def create_new_user() -> None:
 
 
 @cli.command("show")
-@click.option("-u",
-              "--user",
-              "username",
-              default=None,
-              help="Username of the user")
+@click.option("-u", "--user", "username", default=None, help="Username of the user")
 @click.option("-e", "--email", "email", default=None, help="Email of the user")
-@click.option("-i",
-              "--id",
-              "user_id",
-              type=click.UUID,
-              default=None,
-              help="User ID")
-def show_user(username: str | None, email: str | None,
-              user_id: UUID | None) -> None:
+@click.option("-i", "--id", "user_id", type=click.UUID, default=None, help="User ID")
+def show_user(username: str | None, email: str | None, user_id: UUID | None) -> None:
     """Show user details by username, email, or id."""
     identifiers = [username, email, user_id]
     if sum(value is not None for value in identifiers) != 1:
@@ -208,10 +202,7 @@ def show_user(username: str | None, email: str | None,
         return
 
     with Session(engine) as session:
-        user = _find_user(session,
-                          username=username,
-                          email=email,
-                          user_id=user_id)
+        user = _find_user(session, username=username, email=email, user_id=user_id)
         if not user:
             console.print(ERR_USER_NOT_FOUND)
             return
@@ -220,22 +211,11 @@ def show_user(username: str | None, email: str | None,
 
 
 @cli.command("update")
-@click.option("-u",
-              "--user",
-              "username",
-              default=None,
-              help="Current username of the user")
-@click.option("-e",
-              "--email",
-              "email",
-              default=None,
-              help="Current email of the user")
-@click.option("-i",
-              "--id",
-              "user_id",
-              type=click.UUID,
-              default=None,
-              help="User ID")
+@click.option(
+    "-u", "--user", "username", default=None, help="Current username of the user"
+)
+@click.option("-e", "--email", "email", default=None, help="Current email of the user")
+@click.option("-i", "--id", "user_id", type=click.UUID, default=None, help="User ID")
 def update_user(
     username: str | None,
     email: str | None,
@@ -248,41 +228,35 @@ def update_user(
         return
 
     with Session(engine) as session:
-        user = _find_user(session,
-                          username=username,
-                          email=email,
-                          user_id=user_id)
+        user = _find_user(session, username=username, email=email, user_id=user_id)
         if not user:
             console.print(ERR_USER_NOT_FOUND)
             return
 
-        new_username = Prompt.ask("New username",
-                                  default=user.username).strip()
+        new_username = Prompt.ask("New username", default=user.username).strip()
         new_email = Prompt.ask("New email", default=user.email).strip()
-        new_avatar = Prompt.ask("New avatar URL", default=user.avatar
-                                or "").strip() or None
+        new_avatar = (
+            Prompt.ask("New avatar URL", default=user.avatar or "").strip() or None
+        )
         set_password = Confirm.ask("Change password?", default=False)
         new_password = None
         if set_password:
             new_password = Prompt.ask("New password", password=True)
 
         is_active = Confirm.ask("Should be active?", default=user.is_active)
-        is_superuser = Confirm.ask("Should be admin?",
-                                   default=user.is_superuser)
+        is_superuser = Confirm.ask("Should be admin?", default=user.is_superuser)
         is_external = Confirm.ask("Is external?", default=user.is_external)
 
         if new_username != user.username:
             existing = get_user_by_username(session, new_username)
             if existing and existing.id != user.id:
-                console.print(
-                    f"[red]Username '{new_username}' is already in use[/red]")
+                console.print(f"[red]Username '{new_username}' is already in use[/red]")
                 return
 
         if new_email != user.email:
             existing = get_user_by_email(session, new_email)
             if existing and existing.id != user.id:
-                console.print(
-                    f"[red]Email '{new_email}' is already in use[/red]")
+                console.print(f"[red]Email '{new_email}' is already in use[/red]")
                 return
 
         try:
@@ -307,22 +281,20 @@ def update_user(
 
 
 @cli.command("activate")
-@click.option("-u",
-              "--user",
-              "username",
-              default=None,
-              help="Username of the user to activate")
-@click.option("-e",
-              "--email",
-              "email",
-              default=None,
-              help="Email of the user to activate")
-@click.option("-i",
-              "--id",
-              "user_id",
-              type=click.UUID,
-              default=None,
-              help="ID of the user to activate")
+@click.option(
+    "-u", "--user", "username", default=None, help="Username of the user to activate"
+)
+@click.option(
+    "-e", "--email", "email", default=None, help="Email of the user to activate"
+)
+@click.option(
+    "-i",
+    "--id",
+    "user_id",
+    type=click.UUID,
+    default=None,
+    help="ID of the user to activate",
+)
 def activate_user(
     username: str | None,
     email: str | None,
@@ -335,12 +307,8 @@ def activate_user(
         return
 
     with Session(engine) as session:
-
         try:
-            user = _find_user(session,
-                              username=username,
-                              email=email,
-                              user_id=user_id)
+            user = _find_user(session, username=username, email=email, user_id=user_id)
 
             if not user:
                 console.print(ERR_USER_NOT_FOUND)
@@ -349,30 +317,27 @@ def activate_user(
             user.is_active = True
             _touch(user)
             session.commit()
-            console.print(
-                f"[green]User '{user.username}' has been activated[/green]")
+            console.print(f"[green]User '{user.username}' has been activated[/green]")
         except Exception as e:
             session.rollback()
             console.print(f"[red]Error activating user:[/red] {e}")
 
 
 @cli.command("deactivate")
-@click.option("-u",
-              "--user",
-              "username",
-              default=None,
-              help="Username of the user to deactivate")
-@click.option("-e",
-              "--email",
-              "email",
-              default=None,
-              help="Email of the user to deactivate")
-@click.option("-i",
-              "--id",
-              "user_id",
-              type=click.UUID,
-              default=None,
-              help="ID of the user to deactivate")
+@click.option(
+    "-u", "--user", "username", default=None, help="Username of the user to deactivate"
+)
+@click.option(
+    "-e", "--email", "email", default=None, help="Email of the user to deactivate"
+)
+@click.option(
+    "-i",
+    "--id",
+    "user_id",
+    type=click.UUID,
+    default=None,
+    help="ID of the user to deactivate",
+)
 def deactivate_user(
     username: str | None,
     email: str | None,
@@ -386,10 +351,7 @@ def deactivate_user(
 
     with Session(engine) as session:
         try:
-            user = _find_user(session,
-                              username=username,
-                              email=email,
-                              user_id=user_id)
+            user = _find_user(session, username=username, email=email, user_id=user_id)
             if not user:
                 console.print(ERR_USER_NOT_FOUND)
                 return
@@ -397,30 +359,27 @@ def deactivate_user(
             user.is_active = False
             _touch(user)
             session.commit()
-            console.print(
-                f"[green]User '{user.username}' has been deactivated[/green]")
+            console.print(f"[green]User '{user.username}' has been deactivated[/green]")
         except Exception as e:
             session.rollback()
             console.print(f"[red]Error deactivating user:[/red] {e}")
 
 
 @cli.command("delete")
-@click.option("-u",
-              "--user",
-              "username",
-              default=None,
-              help="Username of the user to delete")
-@click.option("-e",
-              "--email",
-              "email",
-              default=None,
-              help="Email of the user to delete")
-@click.option("-i",
-              "--id",
-              "user_id",
-              type=click.UUID,
-              default=None,
-              help="ID of the user to delete")
+@click.option(
+    "-u", "--user", "username", default=None, help="Username of the user to delete"
+)
+@click.option(
+    "-e", "--email", "email", default=None, help="Email of the user to delete"
+)
+@click.option(
+    "-i",
+    "--id",
+    "user_id",
+    type=click.UUID,
+    default=None,
+    help="ID of the user to delete",
+)
 @click.option("-y", "--yes", is_flag=True, help="Skip confirmation prompt")
 def delete_user(
     username: str | None,
@@ -436,17 +395,14 @@ def delete_user(
 
     with Session(engine) as session:
         try:
-            user = _find_user(session,
-                              username=username,
-                              email=email,
-                              user_id=user_id)
+            user = _find_user(session, username=username, email=email, user_id=user_id)
             if not user:
                 console.print(ERR_USER_NOT_FOUND)
                 return
 
             if not yes and not Confirm.ask(
-                    f"Delete user '{user.username}' ({user.email})?",
-                    default=False):
+                f"Delete user '{user.username}' ({user.email})?", default=False
+            ):
                 console.print("[yellow]Cancelled[/yellow]")
                 return
 

@@ -1,16 +1,17 @@
+from datetime import UTC, datetime
 from uuid import UUID
-from typing import List
-from sqlmodel import select, func
-from datetime import datetime, timezone
+
+from sqlmodel import func, select
+
+from core.database import SessionDep
+from core.exceptions import BadRequestException, ConflictException
 
 # --- Project Imports ---
-from core.query_utils import apply_sorting
 from core.logger import logger
-from core.database import SessionDep
-from core.database import get_total_count
-from core.exceptions import ConflictException, BadRequestException
+from core.query_gateway import QueryGateway
+from models.client import Client, ClientCreate, ClientFilters, ClientUpdate
 from models.order import Order
-from models.client import Client, ClientCreate, ClientUpdate, ClientFilters
+from services.client_query_gateway import ClientQueryGateway
 
 
 class ClientService:
@@ -18,54 +19,31 @@ class ClientService:
 
     def __init__(self, session: SessionDep):
         self.session = session
-
-    def _apply_filters(self, stmt, filters: ClientFilters):
-        """Apply filters to client query"""
-        if filters.id:
-            stmt = stmt.where(Client.id.in_(filters.id))
-        if filters.phone:
-            stmt = stmt.where(Client.phone.ilike(f"%{filters.phone}%"))
-        if filters.email:
-            stmt = stmt.where(Client.email.ilike(f"%{filters.email}%"))
-        if filters.instagram:
-            stmt = stmt.where(Client.instagram.ilike(f"%{filters.instagram}%"))
-        if filters.given_name:
-            stmt = stmt.where(
-                Client.given_name.ilike(f"%{filters.given_name}%"))
-        if filters.surname:
-            stmt = stmt.where(Client.surname.ilike(f"%{filters.surname}%"))
-        if filters.discount is not None:
-            stmt = stmt.where(Client.discount == filters.discount)
-        if filters.is_archived is not None:
-            stmt = stmt.where(Client.is_archived == filters.is_archived)
-        if filters.is_trusted is not None:
-            stmt = stmt.where(Client.is_trusted == filters.is_trusted)
-
-        return stmt.distinct()
+        self.query_gateway: QueryGateway[Client, ClientFilters] = ClientQueryGateway(
+            session
+        )
 
     def get_by_id(self, client_id: UUID) -> Client:
         """Get client by ID"""
         logger.debug(f"Fetching client by ID: {client_id}")
-        return self.session.get(Client, client_id)
+        return self.query_gateway.get_by_id(client_id)
 
-    def get_clients(self,
-                    filters: ClientFilters,
-                    offset: int = 0,
-                    limit: int = 100,
-                    sort_field: str = "id",
-                    sort_order: str = "ASC") -> tuple[List[Client], int]:
+    def get_clients(
+        self,
+        filters: ClientFilters,
+        offset: int = 0,
+        limit: int = 100,
+        sort_field: str = "id",
+        sort_order: str = "ASC",
+    ) -> tuple[list[Client], int]:
         """Get filtered and paginated clients with total count"""
-        stmt = select(Client)
-        stmt = self._apply_filters(stmt, filters)
-        stmt = apply_sorting(stmt, Client, sort_field, sort_order)
-
-        # Get total count before pagination
-        total = get_total_count(self.session, stmt)
-
-        stmt = stmt.offset(offset).limit(limit)
-        clients = self.session.exec(stmt).all()
-
-        return clients, total
+        return self.query_gateway.list(
+            filters=filters,
+            offset=offset,
+            limit=limit,
+            sort_field=sort_field,
+            sort_order=sort_order,
+        )
 
     def create(self, client_in: ClientCreate) -> Client:
         """Create a new client"""
@@ -75,8 +53,7 @@ class ClientService:
         stmt = select(Client.id).where(Client.phone == client_in.phone)
         existing = self.session.exec(stmt).one_or_none()
         if existing:
-            logger.warning(
-                f"Client with phone {client_in.phone} already exists")
+            logger.warning(f"Client with phone {client_in.phone} already exists")
             raise ConflictException("Client with such phone already exists")
 
         client = Client(**client_in.model_dump(exclude_unset=True))
@@ -96,7 +73,7 @@ class ClientService:
             logger.warning("No data provided for update")
             raise BadRequestException("No data provided for update")
 
-    # Check if phone is being updated and if it already exists
+        # Check if phone is being updated and if it already exists
         if "phone" in update_data and update_data["phone"] != client.phone:
             stmt = select(Client.id)
             stmt = stmt.where(Client.phone == update_data["phone"])
@@ -107,12 +84,13 @@ class ClientService:
                     f"Phone {update_data['phone']} already exists for another client"
                 )
                 raise ConflictException(
-                    f"Phone number {update_data['phone']} is already in use")
+                    f"Phone number {update_data['phone']} is already in use"
+                )
 
         for field, value in update_data.items():
             setattr(client, field, value)
 
-        client.updated_at = datetime.now(timezone.utc)
+        client.updated_at = datetime.now(UTC)
         self.session.add(client)
         self.session.commit()
         self.session.refresh(client)
@@ -126,8 +104,7 @@ class ClientService:
 
         if self.has_orders(client.id):
             logger.warning(f"Cannot delete client {client.id}: has orders")
-            raise BadRequestException(
-                "Cannot delete client: has active orders")
+            raise BadRequestException("Cannot delete client: has active orders")
 
         self.session.delete(client)
         self.session.commit()
