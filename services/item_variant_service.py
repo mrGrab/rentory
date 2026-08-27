@@ -28,6 +28,10 @@ class ItemVariantService:
             ItemVariantQueryGateway(session)
         )
 
+    def get_by_id(self, variant_id: UUID) -> ItemVariant | None:
+        logger.debug(f"Fetching variant by ID: {variant_id}")
+        return self.query_gateway.get_by_id(variant_id)
+
     def get_variants(
         self,
         filters: ItemVariantFilters,
@@ -48,10 +52,6 @@ class ItemVariantService:
 
         logger.debug(f"Found {len(variants)} variants out of {total} total")
         return variants, total
-
-    def get_by_id(self, variant_id: UUID) -> ItemVariant | None:
-        logger.debug(f"Fetching variant by ID: {variant_id}")
-        return self.query_gateway.get_by_id(variant_id)
 
     def create(self, variant_in: ItemVariantCreate) -> ItemVariant:
         """Create a new item variant"""
@@ -211,7 +211,7 @@ class ItemVariantService:
 
         # Units of the variant's quantity that maintenance takes out of the pool
         effective_quantity = variant.quantity
-        if variant.service_end_time:
+        if variant.service_end_time and variant.status != ItemVariantStatus.CLEANING:
             service_end_date = variant.service_end_time
             if isinstance(service_end_date, datetime):
                 service_end_date = service_end_date.date()

@@ -22,6 +22,19 @@ class ItemService:
         self.variant_service = ItemVariantService(session)
         self.query_gateway: QueryGateway[Item, ItemFilters] = ItemQueryGateway(session)
 
+    def get_by_id(self, item_id: UUID) -> Item | None:
+        """
+        Get item by ID
+
+        Args:
+            item_id: Item UUID
+
+        Returns:
+            Item or None if not found
+        """
+        logger.debug(f"Fetching item by ID: {item_id}")
+        return self.query_gateway.get_by_id(item_id)
+
     def get_items(
         self,
         filters: ItemFilters,
@@ -54,19 +67,6 @@ class ItemService:
 
         logger.debug(f"Found {len(items)} items out of {total} total")
         return items, total
-
-    def get_by_id(self, item_id: UUID) -> Item | None:
-        """
-        Get item by ID
-
-        Args:
-            item_id: Item UUID
-
-        Returns:
-            Item or None if not found
-        """
-        logger.debug(f"Fetching item by ID: {item_id}")
-        return self.query_gateway.get_by_id(item_id)
 
     def create(self, item_in: ItemCreate) -> Item:
         """
@@ -238,7 +238,8 @@ class ItemService:
 
             if not is_available:
                 logger.debug(reason)
-                variant.status = ItemVariantStatus.UNAVAILABLE
+                if variant.status != ItemVariantStatus.CLEANING:
+                    variant.status = ItemVariantStatus.UNAVAILABLE
 
         logger.info(f"Availability checked for item {item.id}")
         return item, availability

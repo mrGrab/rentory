@@ -40,7 +40,9 @@ class ItemVariant(UUIDMixin, TimestampMixin, SQLModel, table=True):
     """Represents a specific variant of an item (e.g., size M, color Red)"""
 
     quantity: int = Field(default=1, ge=0)
-    quantity_in_maintenance: int = Field(default=0, ge=0)
+    quantity_in_maintenance: int = Field(
+        default=0, ge=0, sa_column_kwargs={"server_default": "0"}
+    )
     size: str | None = Field(default=None, max_length=50)
     color: str | None = Field(default=None, max_length=50)
     image_url: str | None = Field(default=None, max_length=512)

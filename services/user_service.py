@@ -38,13 +38,16 @@ class UserService:
     ) -> tuple[list[User], int]:
         """Get filtered and paginated users with total count"""
         logger.debug("Fetching users")
-        return self.query_gateway.list(
+        users, total = self.query_gateway.list(
             filters=filters,
             offset=offset,
             limit=limit,
             sort_field=sort_field,
             sort_order=sort_order,
         )
+
+        logger.debug(f"Found {len(users)} users out of {total} total")
+        return users, total
 
     def create(self, user_in: UserCreate) -> User:
         """Create a new user"""

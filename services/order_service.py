@@ -38,6 +38,11 @@ class OrderService:
             session
         )
 
+    def get_by_id(self, order_id: int) -> Order | None:
+        """Get order by ID"""
+        logger.debug(f"Fetching order by ID: {order_id}")
+        return self.query_gateway.get_by_id(order_id)
+
     def get_orders(
         self,
         filters: OrderFilters,
@@ -58,11 +63,6 @@ class OrderService:
 
         logger.debug(f"Found {len(orders)} orders out of {total} total")
         return orders, total
-
-    def get_by_id(self, order_id: int) -> Order | None:
-        """Get order by ID"""
-        logger.debug(f"Fetching order by ID: {order_id}")
-        return self.query_gateway.get_by_id(order_id)
 
     def check_variant_availability(
         self,

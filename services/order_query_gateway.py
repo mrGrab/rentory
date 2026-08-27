@@ -11,24 +11,18 @@ from models.links import OrderItemLink
 from models.order import Order, OrderFilters
 
 
-def _filter_by_archive_status(stmt: Select, is_archived: bool | None) -> Select:
-    if is_archived is not None:
-        return stmt.where(Order.is_archived == is_archived)
-    return stmt.where(Order.is_archived == False)
-
-
-def _filter_by_phone(stmt: Select, phone: str | None) -> Select:
-    if phone:
-        return stmt.join(Client).where(Client.phone.ilike(f"%{phone}%"))
-    return stmt
-
-
 def _filter_by_ids(stmt: Select, order_ids: int | list[int] | None) -> Select:
     if not order_ids:
         return stmt
     if isinstance(order_ids, list):
         return stmt.where(Order.id.in_(order_ids))
     return stmt.where(Order.id == order_ids)
+
+
+def _filter_by_phone(stmt: Select, phone: str | None) -> Select:
+    if phone:
+        return stmt.join(Client).where(Client.phone.ilike(f"%{phone}%"))
+    return stmt
 
 
 def _filter_by_time_range(stmt: Select, start: date | None, end: date | None) -> Select:
@@ -51,7 +45,11 @@ def _filter_by_item_ids(stmt: Select, item_ids: list[UUID] | None) -> Select:
 def apply_order_filters(stmt: Select, filters: OrderFilters) -> Select:
     """Filter strategy for order queries used by the query gateway module."""
 
-    stmt = _filter_by_archive_status(stmt, filters.is_archived)
+    # Exclude archived by default unless explicitly filtered.
+    if filters.is_archived is None:
+        stmt = stmt.where(Order.is_archived == False)
+    else:
+        stmt = stmt.where(Order.is_archived == filters.is_archived)
 
     if filters.client_id:
         stmt = stmt.where(Order.client_id == filters.client_id)
