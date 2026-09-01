@@ -19,9 +19,9 @@ def validate_time_period(
         raise BadRequestException("End time is required")
 
     # Normalize to datetime for consistent comparison if mixing date and datetime
-    if isinstance(start, date) and not isinstance(start, datetime):
+    if not isinstance(start, datetime):
         start = datetime.combine(start, datetime.min.time())
-    if isinstance(end, date) and not isinstance(end, datetime):
+    if not isinstance(end, datetime):
         end = datetime.combine(end, datetime.min.time())
 
     if start == end:

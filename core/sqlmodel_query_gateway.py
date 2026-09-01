@@ -33,7 +33,6 @@ class SQLModelQueryGateway[TModel, TFilters]:
     ) -> tuple[list[TModel], int]:
         stmt = select(self.model)
         stmt = self.apply_filters(stmt, filters)
-        # TODO: Move apply sorting logic to this module
         stmt = apply_sorting(stmt, self.model, sort_field, sort_order)
 
         total = get_total_count(self.session, stmt)

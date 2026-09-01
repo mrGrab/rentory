@@ -19,9 +19,24 @@ def _filter_by_ids(stmt: Select, order_ids: int | list[int] | None) -> Select:
     return stmt.where(Order.id == order_ids)
 
 
-def _filter_by_phone(stmt: Select, phone: str | None) -> Select:
+def _filter_by_client(
+    stmt: Select, phone: str | None, client_name: str | None
+) -> Select:
+    """Filter by client phone and/or name (given_name or surname)."""
+    if not phone and not client_name:
+        return stmt
+
+    stmt = stmt.join(Client)
+
     if phone:
-        return stmt.join(Client).where(Client.phone.ilike(f"%{phone}%"))
+        stmt = stmt.where(Client.phone.ilike(f"%{phone}%"))
+
+    if client_name:
+        stmt = stmt.where(
+            (Client.given_name.ilike(f"%{client_name}%"))
+            | (Client.surname.ilike(f"%{client_name}%"))
+        )
+
     return stmt
 
 
@@ -59,7 +74,7 @@ def apply_order_filters(stmt: Select, filters: OrderFilters) -> Select:
         stmt = stmt.where(Order.delivery_info["pickup_type"] == filters.pickup_type)
 
     stmt = _filter_by_ids(stmt, filters.id)
-    stmt = _filter_by_phone(stmt, filters.phone)
+    stmt = _filter_by_client(stmt, filters.phone, filters.client_name)
     stmt = _filter_by_time_range(stmt, filters.start_time, filters.end_time)
     stmt = _filter_by_item_ids(stmt, filters.item_ids)
 

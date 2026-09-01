@@ -136,6 +136,7 @@ class OrderFilters(SQLModel):
     tag: str | None = None
     pickup_type: PickupType | None = None
     phone: str | None = None
+    client_name: str | None = None
     item_ids: list[UUID] | None = None
     is_archived: bool | None = None
     created_at: datetime | None = None
