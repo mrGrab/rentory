@@ -5,7 +5,7 @@ from uuid import UUID
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pdf2image import convert_from_bytes
 from PIL import Image
-from sqlmodel import select
+from sqlmodel import Session, select
 from weasyprint import HTML
 
 from core.exceptions import BadRequestException, ConflictException
@@ -40,7 +40,7 @@ class OrderService:
     """Business logic for order operations"""
 
     def __init__(self, session):
-        self.session = session
+        self.session: Session = session
         self.item_variant_service = ItemVariantService(session)
         self.query_gateway: QueryGateway[Order, OrderFilters] = OrderQueryGateway(
             session
@@ -250,48 +250,13 @@ class OrderService:
             raise BadRequestException("No data provided for update")
 
         # Get effective dates for validation
-        start_time = order_in.start_time if order_in.start_time else order.start_time
-        end_time = order_in.end_time if order_in.end_time else order.end_time
-
-        # Validate dates
+        start_time, end_time = self._resolve_effective_dates(order, order_in)
         validate_time_period(start_time, end_time)
 
         existing_links = {link.item_variant_id: link for link in order.item_links}
-        items_to_validate = order_in.items
-        if items_to_validate is None and (
-            start_time != order.start_time or end_time != order.end_time
-        ):
-            items_to_validate = []
-            for link in order.item_links:
-                if link.item_variant is None:
-                    raise BadRequestException("Order has an invalid item variant link")
-                items_to_validate.append(
-                    ItemVariantQuantity(
-                        item_id=link.item_variant.item_id,
-                        item_variant_id=link.item_variant_id,
-                        quantity=link.quantity,
-                        price=link.price,
-                        deposit=link.deposit,
-                    )
-                )
-
-        if items_to_validate is not None:
-            if not items_to_validate:
-                raise BadRequestException("Order must contain items")
-
-            # Closing an order (DONE/RETURNED) hands the item back rather than
-            # booking it out, so maintenance/availability no longer applies.
-            effective_status = (
-                order_in.status if order_in.status is not None else order.status
-            )
-            if effective_status not in (OrderStatus.DONE, OrderStatus.RETURNED):
-                self.validate_order_items(
-                    items=items_to_validate,
-                    start_time=start_time,
-                    end_time=end_time,
-                    exclude_order_id=order.id,
-                    existing_links=existing_links,
-                )
+        self._validate_updated_items(
+            order, order_in, start_time, end_time, existing_links
+        )
 
         # Update order fields
         for field, value in update_data.items():
@@ -305,9 +270,7 @@ class OrderService:
         # Update items if provided
         if order_in.items is not None:
             order.item_links = [
-                self._build_order_link(
-                    item, existing_links.get(item.item_variant_id)
-                )
+                self._build_order_link(item, existing_links.get(item.item_variant_id))
                 for item in order_in.items
             ]
 
@@ -324,6 +287,66 @@ class OrderService:
 
         logger.info(f"Order {order.id} updated successfully")
         return order
+
+    def _resolve_effective_dates(
+        self, order: Order, order_in: OrderUpdate
+    ) -> tuple[date, date]:
+        """Resolve the start/end dates that should apply after the update."""
+        start_time = order_in.start_time if order_in.start_time else order.start_time
+        end_time = order_in.end_time if order_in.end_time else order.end_time
+        return start_time, end_time
+
+    def _build_items_from_links(self, order: Order) -> list[ItemVariantQuantity]:
+        """Reconstruct the current item list from an order's existing links."""
+        items = []
+        for link in order.item_links:
+            if link.item_variant is None:
+                raise BadRequestException("Order has an invalid item variant link")
+            items.append(
+                ItemVariantQuantity(
+                    item_id=link.item_variant.item_id,
+                    item_variant_id=link.item_variant_id,
+                    quantity=link.quantity,
+                    price=link.price,
+                    deposit=link.deposit,
+                )
+            )
+        return items
+
+    def _validate_updated_items(
+        self,
+        order: Order,
+        order_in: OrderUpdate,
+        start_time: date,
+        end_time: date,
+        existing_links: dict[UUID, OrderItemLink],
+    ) -> None:
+        """Re-validate item availability when items or dates changed."""
+        items_to_validate = order_in.items
+        dates_changed = start_time != order.start_time or end_time != order.end_time
+        if items_to_validate is None and dates_changed:
+            items_to_validate = self._build_items_from_links(order)
+
+        if items_to_validate is None:
+            return
+        if not items_to_validate:
+            raise BadRequestException("Order must contain items")
+
+        # Closing an order (DONE/RETURNED) hands the item back rather than
+        # booking it out, so maintenance/availability no longer applies.
+        effective_status = (
+            order_in.status if order_in.status is not None else order.status
+        )
+        if effective_status in (OrderStatus.DONE, OrderStatus.RETURNED):
+            return
+
+        self.validate_order_items(
+            items=items_to_validate,
+            start_time=start_time,
+            end_time=end_time,
+            exclude_order_id=order.id,
+            existing_links=existing_links,
+        )
 
     def archive(self, order: Order) -> None:
         """Archive an order (soft delete)"""

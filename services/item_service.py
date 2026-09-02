@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime
 from uuid import UUID
 
-from sqlmodel import select
+from sqlmodel import Session, select
 
 # --- Project Imports ---
 from core.database import SessionDep
@@ -9,7 +9,12 @@ from core.exceptions import BadRequestException, ConflictException
 from core.logger import logger
 from core.query_gateway import QueryGateway
 from models.item import Item, ItemCreate, ItemFilters, ItemUpdate
-from models.item_variant import ItemVariant, ItemVariantCreate, ItemVariantStatus
+from models.item_variant import (
+    ItemVariant,
+    ItemVariantCreate,
+    ItemVariantStatus,
+    ItemVariantUpdate,
+)
 from services.helpers import ensure_utc, validate_time_period
 from services.item_query_gateway import ItemQueryGateway
 from services.item_variant_service import ItemVariantService
@@ -19,7 +24,7 @@ class ItemService:
     """Handles all business logic and database operations for Items"""
 
     def __init__(self, session: SessionDep):
-        self.session = session
+        self.session: Session = session
         self.variant_service = ItemVariantService(session)
         self.query_gateway: QueryGateway[Item, ItemFilters] = ItemQueryGateway(session)
 
@@ -105,7 +110,7 @@ class ItemService:
                 variant_create = ItemVariantCreate(
                     **variant_in.model_dump(), item_id=item.id
                 )
-                self.variant_service.create(variant_create)
+                _ = self.variant_service.create(variant_create)
 
         self.session.commit()
         self.session.refresh(item)
@@ -140,96 +145,14 @@ class ItemService:
             logger.warning("No data provided for update")
             raise BadRequestException("No data provided for update")
 
-        # Check if title is being updated and if it already exists
-        title = update_data.get("title", None)
-        if title and title != item.title:
-            stmt = select(Item.id)
-            stmt = stmt.where(Item.title == title, Item.id != item.id)
-            existing = self.session.exec(stmt).first()
-            if existing:
-                logger.warning(f"Title '{title}' already exists")
-                raise ConflictException(f"Title '{title}' is already in use")
+        self._validate_title_uniqueness(item, update_data.get("title"))
 
         try:
-            # Update item fields
             for field, value in update_data.items():
                 setattr(item, field, value)
 
             if variants_were_supplied:
-                if item_in.variants is None:
-                    raise BadRequestException("variants must be a list when supplied")
-
-                existing_variants_map = {v.id: v for v in item.variants}
-                supplied_variant_ids = {
-                    variant_in.id
-                    for variant_in in item_in.variants
-                    if variant_in.id is not None
-                }
-
-                for variant_id in supplied_variant_ids:
-                    if variant_id not in existing_variants_map:
-                        raise BadRequestException(
-                            f"Variant {variant_id} does not belong to item {item.id}"
-                        )
-
-                # Archive removals before creating replacements
-                removed_variant_ids = set(existing_variants_map) - supplied_variant_ids
-                for variant_id in removed_variant_ids:
-                    logger.debug(f"Archiving variant {variant_id} (removed from item)")
-                    self.variant_service.delete(
-                        existing_variants_map[variant_id], commit=False
-                    )
-
-                # Removed variants are candidates for reuse
-                # by comparing them with the most recent ones.
-                reusable_variants = sorted(
-                    (existing_variants_map[vid] for vid in removed_variant_ids),
-                    key=lambda v: ensure_utc(v.updated_at),
-                    reverse=True,
-                )
-
-                def _pop_reusable_variant(
-                    size: str | None, color: str | None
-                ) -> ItemVariant | None:
-                    size_key = self.variant_service.normalize_identity(size)
-                    color_key = self.variant_service.normalize_identity(color)
-                    for index, candidate in enumerate(reusable_variants):
-                        if (
-                            candidate.size_key == size_key
-                            and candidate.color_key == color_key
-                        ):
-                            return reusable_variants.pop(index)
-                    return None
-
-                for variant_in in item_in.variants:
-                    if variant_in.id is None:
-                        reused_variant = _pop_reusable_variant(
-                            variant_in.size, variant_in.color
-                        )
-                        if reused_variant is not None:
-                            logger.debug(
-                                f"Reusing archived variant {reused_variant.id} "
-                                + "for supplied variant with matching size/color"
-                            )
-                            self.variant_service.update(
-                                reused_variant,
-                                variant_in.model_copy(update={"is_archived": False}),
-                                commit=False,
-                            )
-                            continue
-
-                        variant_create = ItemVariantCreate(
-                            item_id=item.id,
-                            **variant_in.model_dump(exclude={"id"}, exclude_unset=True),
-                        )
-                        self.variant_service.create(variant_create, commit=False)
-                        continue
-
-                    existing_variant = existing_variants_map.get(variant_in.id)
-                    self.variant_service.update(
-                        existing_variant, variant_in, commit=False
-                    )
-
+                self._sync_variants(item, item_in)
                 item.updated_at = datetime.now(UTC)
                 self.session.commit()
                 self.session.refresh(item)
@@ -239,6 +162,120 @@ class ItemService:
 
         logger.info(f"Item updated successfully: {item.id}")
         return item
+
+    def _validate_title_uniqueness(self, item: Item, title: str | None) -> None:
+        """Raise if `title` is already used by a different item."""
+        if not title or title == item.title:
+            return
+
+        stmt = select(Item.id).where(Item.title == title, Item.id != item.id)
+        if self.session.exec(stmt).first():
+            logger.warning(f"Title '{title}' already exists")
+            raise ConflictException(f"Title '{title}' is already in use")
+
+    def _sync_variants(self, item: Item, item_in: ItemUpdate) -> None:
+        """Reconcile `item.variants` with the supplied variant list.
+
+        Variants missing from `item_in.variants` are archived; archived
+        variants matching a newly-supplied size/color are reused instead of
+        creating a duplicate; the rest are created or updated as needed.
+        """
+        if item_in.variants is None:
+            raise BadRequestException("variants must be a list when supplied")
+
+        existing_variants_map = {v.id: v for v in item.variants}
+        supplied_variant_ids = {
+            variant_in.id
+            for variant_in in item_in.variants
+            if variant_in.id is not None
+        }
+        self._validate_supplied_variant_ids(
+            item, existing_variants_map, supplied_variant_ids
+        )
+
+        # Archive removals before creating replacements
+        removed_variant_ids = set(existing_variants_map) - supplied_variant_ids
+        reusable_variants = self._archive_removed_variants(
+            existing_variants_map, removed_variant_ids
+        )
+
+        for variant_in in item_in.variants:
+            if variant_in.id is None:
+                self._create_or_reuse_variant(item, variant_in, reusable_variants)
+            else:
+                _ = self.variant_service.update(
+                    existing_variants_map[variant_in.id], variant_in, commit=False
+                )
+
+    def _validate_supplied_variant_ids(
+        self,
+        item: Item,
+        existing_variants_map: dict[UUID | None, ItemVariant],
+        supplied_variant_ids: set[UUID],
+    ) -> None:
+        for variant_id in supplied_variant_ids:
+            if variant_id not in existing_variants_map:
+                raise BadRequestException(
+                    f"Variant {variant_id} does not belong to item {item.id}"
+                )
+
+    def _archive_removed_variants(
+        self,
+        existing_variants_map: dict[UUID | None, ItemVariant],
+        removed_variant_ids: set[UUID | None],
+    ) -> list[ItemVariant]:
+        """Archive removed variants, returning them ordered for size/color reuse."""
+        for variant_id in removed_variant_ids:
+            logger.debug(f"Archiving variant {variant_id} (removed from item)")
+            self.variant_service.delete(existing_variants_map[variant_id], commit=False)
+
+        # Removed variants are candidates for reuse
+        # by comparing them with the most recent ones.
+        return sorted(
+            (existing_variants_map[vid] for vid in removed_variant_ids),
+            key=lambda v: ensure_utc(v.updated_at),
+            reverse=True,
+        )
+
+    def _pop_reusable_variant(
+        self,
+        reusable_variants: list[ItemVariant],
+        size: str | None,
+        color: str | None,
+    ) -> ItemVariant | None:
+        size_key = self.variant_service.normalize_identity(size)
+        color_key = self.variant_service.normalize_identity(color)
+        for index, candidate in enumerate(reusable_variants):
+            if candidate.size_key == size_key and candidate.color_key == color_key:
+                return reusable_variants.pop(index)
+        return None
+
+    def _create_or_reuse_variant(
+        self,
+        item: Item,
+        variant_in: ItemVariantUpdate,
+        reusable_variants: list[ItemVariant],
+    ) -> None:
+        reused_variant = self._pop_reusable_variant(
+            reusable_variants, variant_in.size, variant_in.color
+        )
+        if reused_variant is not None:
+            logger.debug(
+                f"Reusing archived variant {reused_variant.id} "
+                + "for supplied variant with matching size/color"
+            )
+            _ = self.variant_service.update(
+                reused_variant,
+                variant_in.model_copy(update={"is_archived": False}),
+                commit=False,
+            )
+            return
+
+        variant_create = ItemVariantCreate(
+            item_id=item.id,
+            **variant_in.model_dump(exclude={"id"}, exclude_unset=True),
+        )
+        _ = self.variant_service.create(variant_create, commit=False)
 
     def delete(self, item: Item) -> None:
         """
