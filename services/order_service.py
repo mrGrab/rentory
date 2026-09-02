@@ -24,7 +24,7 @@ from models.order import (
     OrderStatus,
     OrderUpdate,
 )
-from models.payment import Payment, PaymentType
+from models.payment import Payment, PaymentBase, PaymentType
 from services.helpers import validate_time_period
 from services.item_variant_service import ItemVariantService
 from services.order_query_gateway import OrderQueryGateway
@@ -134,7 +134,7 @@ class OrderService:
             ):
                 unavailable_variants.append(
                     f"Variant {item.item_variant_id}: 0 unit(s) available; "
-                    "archived variants cannot be added or increased"
+                    + "archived variants cannot be added or increased"
                 )
                 continue
             is_available, reason = self.check_variant_availability(
@@ -152,49 +152,6 @@ class OrderService:
             error_msg = "; ".join(unavailable_variants)
             logger.warning(f"Validation failed: {error_msg}")
             raise ConflictException(error_msg)
-
-    def _build_order_link(
-        self,
-        item: ItemVariantQuantity,
-        existing_link: OrderItemLink | None = None,
-    ) -> OrderItemLink:
-        variant = self.session.get(ItemVariant, item.item_variant_id)
-        if variant is None or variant.item_id != item.item_id:
-            raise BadRequestException("Selected variant does not belong to the item")
-        if variant.id is None or variant.item is None:
-            raise BadRequestException("Selected variant is incomplete")
-
-        price = item.price
-        deposit = item.deposit
-        price_type_snapshot = None
-        if item.item_variant_price_id is not None:
-            tier = self.session.get(ItemVariantPrice, item.item_variant_price_id)
-            if tier is None or tier.variant_id != variant.id:
-                raise BadRequestException(
-                    "Selected price tier does not belong to the selected variant"
-                )
-            price = tier.amount
-            deposit = tier.deposit
-            price_type_snapshot = tier.price_type
-
-        return OrderItemLink(
-            item_variant_id=variant.id,
-            price=price,
-            deposit=deposit,
-            quantity=item.quantity,
-            item_title_snapshot=(
-                existing_link.item_title_snapshot
-                if existing_link
-                else variant.item.title
-            ),
-            variant_size_snapshot=(
-                existing_link.variant_size_snapshot if existing_link else variant.size
-            ),
-            variant_color_snapshot=(
-                existing_link.variant_color_snapshot if existing_link else variant.color
-            ),
-            price_type_snapshot=price_type_snapshot,
-        )
 
     def create(self, order_in: OrderCreate) -> Order:
         """Create a new order"""
@@ -245,7 +202,7 @@ class OrderService:
             exclude={"items", "payments"}, exclude_unset=True
         )
 
-        if not update_data and not order_in.items and not order_in.payments:
+        if not update_data and not order_in.items and order_in.payments is None:
             logger.warning("No data provided for update")
             raise BadRequestException("No data provided for update")
 
@@ -276,9 +233,7 @@ class OrderService:
 
         # Update payments if provided
         if order_in.payments is not None:
-            order.payments = [
-                Payment(**payment.model_dump()) for payment in order_in.payments
-            ]
+            order.payments = self._merge_payments(order.payments, order_in.payments)
 
         order.updated_at = datetime.now(UTC)
         self.session.add(order)
@@ -287,66 +242,6 @@ class OrderService:
 
         logger.info(f"Order {order.id} updated successfully")
         return order
-
-    def _resolve_effective_dates(
-        self, order: Order, order_in: OrderUpdate
-    ) -> tuple[date, date]:
-        """Resolve the start/end dates that should apply after the update."""
-        start_time = order_in.start_time if order_in.start_time else order.start_time
-        end_time = order_in.end_time if order_in.end_time else order.end_time
-        return start_time, end_time
-
-    def _build_items_from_links(self, order: Order) -> list[ItemVariantQuantity]:
-        """Reconstruct the current item list from an order's existing links."""
-        items = []
-        for link in order.item_links:
-            if link.item_variant is None:
-                raise BadRequestException("Order has an invalid item variant link")
-            items.append(
-                ItemVariantQuantity(
-                    item_id=link.item_variant.item_id,
-                    item_variant_id=link.item_variant_id,
-                    quantity=link.quantity,
-                    price=link.price,
-                    deposit=link.deposit,
-                )
-            )
-        return items
-
-    def _validate_updated_items(
-        self,
-        order: Order,
-        order_in: OrderUpdate,
-        start_time: date,
-        end_time: date,
-        existing_links: dict[UUID, OrderItemLink],
-    ) -> None:
-        """Re-validate item availability when items or dates changed."""
-        items_to_validate = order_in.items
-        dates_changed = start_time != order.start_time or end_time != order.end_time
-        if items_to_validate is None and dates_changed:
-            items_to_validate = self._build_items_from_links(order)
-
-        if items_to_validate is None:
-            return
-        if not items_to_validate:
-            raise BadRequestException("Order must contain items")
-
-        # Closing an order (DONE/RETURNED) hands the item back rather than
-        # booking it out, so maintenance/availability no longer applies.
-        effective_status = (
-            order_in.status if order_in.status is not None else order.status
-        )
-        if effective_status in (OrderStatus.DONE, OrderStatus.RETURNED):
-            return
-
-        self.validate_order_items(
-            items=items_to_validate,
-            start_time=start_time,
-            end_time=end_time,
-            exclude_order_id=order.id,
-            existing_links=existing_links,
-        )
 
     def archive(self, order: Order) -> None:
         """Archive an order (soft delete)"""
@@ -378,7 +273,7 @@ class OrderService:
         orders = self.session.exec(stmt).all()
 
         logger.debug(f"Found {len(orders)} orders for client {client_id}")
-        return orders
+        return list(orders)
 
     def get_orders_by_status(self, status: str) -> list[Order]:
         """Get all orders with a specific status"""
@@ -388,7 +283,7 @@ class OrderService:
         orders = self.session.exec(stmt).all()
 
         logger.debug(f"Found {len(orders)} orders with status {status}")
-        return orders
+        return list(orders)
 
     def generate_invoice_pdf(self, order: Order) -> bytes:
         """Generate PDF invoice from order data"""
@@ -481,3 +376,139 @@ class OrderService:
         image_bytes = BytesIO()
         invoice_image.save(image_bytes, format="JPEG", quality=90, optimize=True)
         return image_bytes.getvalue()
+
+    def _build_order_link(
+        self,
+        item: ItemVariantQuantity,
+        existing_link: OrderItemLink | None = None,
+    ) -> OrderItemLink:
+        variant = self.session.get(ItemVariant, item.item_variant_id)
+        if variant is None or variant.item_id != item.item_id:
+            raise BadRequestException("Selected variant does not belong to the item")
+        if variant.id is None or variant.item is None:
+            raise BadRequestException("Selected variant is incomplete")
+
+        price = item.price
+        deposit = item.deposit
+        price_type_snapshot = None
+        if item.item_variant_price_id is not None:
+            tier = self.session.get(ItemVariantPrice, item.item_variant_price_id)
+            if tier is None or tier.variant_id != variant.id:
+                raise BadRequestException(
+                    "Selected price tier does not belong to the selected variant"
+                )
+            price = tier.amount
+            deposit = tier.deposit
+            price_type_snapshot = tier.price_type
+
+        return OrderItemLink(
+            item_variant_id=variant.id,
+            price=price,
+            deposit=deposit,
+            quantity=item.quantity,
+            item_title_snapshot=(
+                existing_link.item_title_snapshot
+                if existing_link
+                else variant.item.title
+            ),
+            variant_size_snapshot=(
+                existing_link.variant_size_snapshot if existing_link else variant.size
+            ),
+            variant_color_snapshot=(
+                existing_link.variant_color_snapshot if existing_link else variant.color
+            ),
+            price_type_snapshot=price_type_snapshot,
+        )
+
+    def _merge_payments(
+        self,
+        existing_payments: list[Payment],
+        incoming_payments: list[PaymentBase],
+    ) -> list[Payment]:
+        """Reconcile the incoming payment list with existing rows.
+
+        Payments referenced by `id` are updated in place (so `created_at`
+        survives untouched unless a field actually changes); payments with no
+        `id` are created fresh. Existing payments omitted from the incoming
+        list are dropped via the relationship's delete-orphan cascade.
+        """
+        existing_by_id = {payment.id: payment for payment in existing_payments}
+        merged: list[Payment] = []
+
+        for payment_in in incoming_payments:
+            if payment_in.id is None:
+                merged.append(Payment(**payment_in.model_dump(exclude={"id"})))
+                continue
+
+            existing = existing_by_id.get(payment_in.id)
+            if existing is None:
+                raise BadRequestException(
+                    f"Payment {payment_in.id} does not belong to this order"
+                )
+            for field in ("amount", "payment_method", "entry_type", "note"):
+                new_value = getattr(payment_in, field)
+                if getattr(existing, field) != new_value:
+                    setattr(existing, field, new_value)
+            merged.append(existing)
+
+        return merged
+
+    def _resolve_effective_dates(
+        self, order: Order, order_in: OrderUpdate
+    ) -> tuple[date, date]:
+        """Resolve the start/end dates that should apply after the update."""
+        start_time = order_in.start_time if order_in.start_time else order.start_time
+        end_time = order_in.end_time if order_in.end_time else order.end_time
+        return start_time, end_time
+
+    def _build_items_from_links(self, order: Order) -> list[ItemVariantQuantity]:
+        """Reconstruct the current item list from an order's existing links."""
+        items = []
+        for link in order.item_links:
+            if link.item_variant is None:
+                raise BadRequestException("Order has an invalid item variant link")
+            items.append(
+                ItemVariantQuantity(
+                    item_id=link.item_variant.item_id,
+                    item_variant_id=link.item_variant_id,
+                    quantity=link.quantity,
+                    price=link.price,
+                    deposit=link.deposit,
+                )
+            )
+        return items
+
+    def _validate_updated_items(
+        self,
+        order: Order,
+        order_in: OrderUpdate,
+        start_time: date,
+        end_time: date,
+        existing_links: dict[UUID, OrderItemLink],
+    ) -> None:
+        """Re-validate item availability when items or dates changed."""
+        items_to_validate = order_in.items
+        dates_changed = start_time != order.start_time or end_time != order.end_time
+        if items_to_validate is None and dates_changed:
+            items_to_validate = self._build_items_from_links(order)
+
+        if items_to_validate is None:
+            return
+        if not items_to_validate:
+            raise BadRequestException("Order must contain items")
+
+        # Closing an order (DONE/RETURNED) hands the item back rather than
+        # booking it out, so maintenance/availability no longer applies.
+        effective_status = (
+            order_in.status if order_in.status is not None else order.status
+        )
+        if effective_status in (OrderStatus.DONE, OrderStatus.RETURNED):
+            return
+
+        self.validate_order_items(
+            items=items_to_validate,
+            start_time=start_time,
+            end_time=end_time,
+            exclude_order_id=order.id,
+            existing_links=existing_links,
+        )
