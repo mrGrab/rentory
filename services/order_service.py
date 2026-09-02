@@ -14,10 +14,18 @@ from core.exceptions import BadRequestException, ConflictException
 from core.logger import logger
 from core.query_gateway import QueryGateway
 from models.client import Client
-from models.item_variant import ItemVariant
+from models.item_variant import ItemVariant, ItemVariantPrice, ItemVariantQuantity
 from models.links import OrderItemLink
-from models.order import Order, OrderCreate, OrderFilters, OrderStatus, OrderUpdate
+from models.order import (
+    DeliveryInfo,
+    Order,
+    OrderCreate,
+    OrderFilters,
+    OrderStatus,
+    OrderUpdate,
+)
 from models.payment import Payment, PaymentType
+from services.helpers import validate_time_period
 from services.item_variant_service import ItemVariantService
 from services.order_query_gateway import OrderQueryGateway
 
@@ -96,10 +104,11 @@ class OrderService:
 
     def validate_order_items(
         self,
-        items: list,
+        items: list[ItemVariantQuantity],
         start_time: date,
         end_time: date,
         exclude_order_id: int | None = None,
+        existing_links: dict[UUID, OrderItemLink] | None = None,
     ) -> None:
         """Validate all items in order are available"""
         if not items:
@@ -108,6 +117,26 @@ class OrderService:
         unavailable_variants = []
 
         for item in items:
+            variant = self.session.get(ItemVariant, item.item_variant_id)
+            if variant is None:
+                unavailable_variants.append(f"Variant {item.item_variant_id} not found")
+                continue
+            if variant.item_id != item.item_id:
+                unavailable_variants.append(
+                    f"Variant {item.item_variant_id} does not belong to item {item.item_id}"
+                )
+                continue
+            existing_link = (
+                existing_links.get(item.item_variant_id) if existing_links else None
+            )
+            if variant.is_archived and (
+                existing_link is None or item.quantity != existing_link.quantity
+            ):
+                unavailable_variants.append(
+                    f"Variant {item.item_variant_id}: 0 unit(s) available; "
+                    "archived variants cannot be added or increased"
+                )
+                continue
             is_available, reason = self.check_variant_availability(
                 variant_id=item.item_variant_id,
                 start_time=start_time,
@@ -124,13 +153,55 @@ class OrderService:
             logger.warning(f"Validation failed: {error_msg}")
             raise ConflictException(error_msg)
 
+    def _build_order_link(
+        self,
+        item: ItemVariantQuantity,
+        existing_link: OrderItemLink | None = None,
+    ) -> OrderItemLink:
+        variant = self.session.get(ItemVariant, item.item_variant_id)
+        if variant is None or variant.item_id != item.item_id:
+            raise BadRequestException("Selected variant does not belong to the item")
+        if variant.id is None or variant.item is None:
+            raise BadRequestException("Selected variant is incomplete")
+
+        price = item.price
+        deposit = item.deposit
+        price_type_snapshot = None
+        if item.item_variant_price_id is not None:
+            tier = self.session.get(ItemVariantPrice, item.item_variant_price_id)
+            if tier is None or tier.variant_id != variant.id:
+                raise BadRequestException(
+                    "Selected price tier does not belong to the selected variant"
+                )
+            price = tier.amount
+            deposit = tier.deposit
+            price_type_snapshot = tier.price_type
+
+        return OrderItemLink(
+            item_variant_id=variant.id,
+            price=price,
+            deposit=deposit,
+            quantity=item.quantity,
+            item_title_snapshot=(
+                existing_link.item_title_snapshot
+                if existing_link
+                else variant.item.title
+            ),
+            variant_size_snapshot=(
+                existing_link.variant_size_snapshot if existing_link else variant.size
+            ),
+            variant_color_snapshot=(
+                existing_link.variant_color_snapshot if existing_link else variant.color
+            ),
+            price_type_snapshot=price_type_snapshot,
+        )
+
     def create(self, order_in: OrderCreate) -> Order:
         """Create a new order"""
         logger.debug(f"Creating order for client {order_in.client_id}")
 
         # Validate dates
-        if order_in.start_time > order_in.end_time:
-            raise BadRequestException("Start time must be before end time")
+        validate_time_period(order_in.start_time, order_in.end_time)
 
         # Validate item availability
         self.validate_order_items(
@@ -151,15 +222,7 @@ class OrderService:
         order = Order(**order_data)
 
         # Create order-item links
-        order.item_links = [
-            OrderItemLink(
-                item_variant_id=item.item_variant_id,
-                price=item.price,
-                deposit=item.deposit,
-                quantity=item.quantity,
-            )
-            for item in order_in.items
-        ]
+        order.item_links = [self._build_order_link(item) for item in order_in.items]
 
         # Create payments if provided
         if order_in.payments:
@@ -191,12 +254,29 @@ class OrderService:
         end_time = order_in.end_time if order_in.end_time else order.end_time
 
         # Validate dates
-        if start_time > end_time:
-            raise BadRequestException("Start time must be before end time")
+        validate_time_period(start_time, end_time)
 
-        # Validate items if provided
-        if order_in.items is not None:
-            if not order_in.items:
+        existing_links = {link.item_variant_id: link for link in order.item_links}
+        items_to_validate = order_in.items
+        if items_to_validate is None and (
+            start_time != order.start_time or end_time != order.end_time
+        ):
+            items_to_validate = []
+            for link in order.item_links:
+                if link.item_variant is None:
+                    raise BadRequestException("Order has an invalid item variant link")
+                items_to_validate.append(
+                    ItemVariantQuantity(
+                        item_id=link.item_variant.item_id,
+                        item_variant_id=link.item_variant_id,
+                        quantity=link.quantity,
+                        price=link.price,
+                        deposit=link.deposit,
+                    )
+                )
+
+        if items_to_validate is not None:
+            if not items_to_validate:
                 raise BadRequestException("Order must contain items")
 
             # Closing an order (DONE/RETURNED) hands the item back rather than
@@ -206,10 +286,11 @@ class OrderService:
             )
             if effective_status not in (OrderStatus.DONE, OrderStatus.RETURNED):
                 self.validate_order_items(
-                    items=order_in.items,
+                    items=items_to_validate,
                     start_time=start_time,
                     end_time=end_time,
                     exclude_order_id=order.id,
+                    existing_links=existing_links,
                 )
 
         # Update order fields
@@ -224,11 +305,8 @@ class OrderService:
         # Update items if provided
         if order_in.items is not None:
             order.item_links = [
-                OrderItemLink(
-                    item_variant_id=item.item_variant_id,
-                    price=item.price,
-                    deposit=item.deposit,
-                    quantity=item.quantity,
+                self._build_order_link(
+                    item, existing_links.get(item.item_variant_id)
                 )
                 for item in order_in.items
             ]
@@ -293,18 +371,21 @@ class OrderService:
         """Generate PDF invoice from order data"""
         logger.debug(f"Generating invoice PDF for order {order.id}")
 
-        items = [
-            {
-                "title": link.item_variant.item.title,
-                "image_url": link.item_variant.image_url,
-                "size": link.item_variant.size,
-                "color": link.item_variant.color,
-                "price": link.price,
-                "deposit": link.deposit,
-                "quantity": link.quantity,
-            }
-            for link in order.item_links
-        ]
+        items = []
+        for link in order.item_links:
+            if link.item_variant is None or link.item_variant.item is None:
+                raise BadRequestException("Order has an invalid item variant link")
+            items.append(
+                {
+                    "title": link.item_title_snapshot or link.item_variant.item.title,
+                    "image_url": link.item_variant.image_url,
+                    "size": link.variant_size_snapshot or link.item_variant.size,
+                    "color": link.variant_color_snapshot or link.item_variant.color,
+                    "price": link.price,
+                    "deposit": link.deposit,
+                    "quantity": link.quantity,
+                }
+            )
 
         rent_paid = sum(
             p.amount for p in order.payments if p.entry_type == PaymentType.PAYMENT
@@ -313,13 +394,14 @@ class OrderService:
             p.amount for p in order.payments if p.entry_type == PaymentType.DEPOSIT
         )
 
-        delivery = order.delivery_info or {}
-        if hasattr(delivery, "pickup_type"):
+        delivery = order.delivery_info
+        if isinstance(delivery, DeliveryInfo):
             pickup_type = delivery.pickup_type
             return_type = delivery.return_type
         else:
-            pickup_type = delivery.get("pickup_type", "")
-            return_type = delivery.get("return_type", "")
+            delivery_data = delivery or {}
+            pickup_type = delivery_data.get("pickup_type", "")
+            return_type = delivery_data.get("return_type", "")
 
         is_postal_pickup = pickup_type == "postal_service"
         is_postal_return = return_type == "postal_service"
@@ -353,6 +435,8 @@ class OrderService:
         html_content = template.render(**invoice_data)
 
         pdf_bytes = HTML(string=html_content).write_pdf()
+        if pdf_bytes is None:
+            raise RuntimeError("Invoice PDF rendering returned no data")
 
         logger.debug(f"Invoice PDF generated for order {order.id}")
         return pdf_bytes

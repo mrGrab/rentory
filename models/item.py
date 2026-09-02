@@ -67,7 +67,7 @@ class ItemUpdate(SQLModel):
     image_url: str | None = Field(default=None, max_length=512)
     status: ItemStatus | None = None
     tags: list[str] | None = None
-    variants: list[ItemVariantUpdate] | None = Field(default_factory=list)
+    variants: list[ItemVariantUpdate] | None = None
     is_archived: bool | None = None
 
 

@@ -3,6 +3,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
+from sqlalchemy import UniqueConstraint, event
 from sqlmodel import Field, Relationship, SQLModel
 
 from models.common import TimestampMixin, UUIDMixin
@@ -39,6 +40,16 @@ class ItemVariantPrice(UUIDMixin, SQLModel, table=True):
 class ItemVariant(UUIDMixin, TimestampMixin, SQLModel, table=True):
     """Represents a specific variant of an item (e.g., size M, color Red)"""
 
+    __table_args__ = (
+        UniqueConstraint(
+            "item_id",
+            "size_key",
+            "color_key",
+            "active_identity_key",
+            name="uq_active_item_variant_identity",
+        ),
+    )
+
     quantity: int = Field(default=1, ge=0)
     quantity_in_maintenance: int = Field(
         default=0, ge=0, sa_column_kwargs={"server_default": "0"}
@@ -49,6 +60,9 @@ class ItemVariant(UUIDMixin, TimestampMixin, SQLModel, table=True):
     service_start_time: date | None = None
     service_end_time: date | None = None
     is_archived: bool = Field(default=False, index=True)
+    size_key: str = Field(default="", max_length=50)
+    color_key: str = Field(default="", max_length=50)
+    active_identity_key: str | None = Field(default=None, max_length=64)
     status: ItemVariantStatus = Field(default=ItemVariantStatus.AVAILABLE, index=True)
 
     item_id: UUID = Field(foreign_key="item.id", index=True)
@@ -58,6 +72,10 @@ class ItemVariant(UUIDMixin, TimestampMixin, SQLModel, table=True):
         back_populates="variant", cascade_delete=True
     )
     order_links: list[OrderItemLink] = Relationship(back_populates="item_variant")
+
+    @staticmethod
+    def _normalize_identity(value: str | None) -> str:
+        return value.strip().casefold() if value and value.strip() else ""
 
 
 # ---------- Database Model ----------
@@ -93,6 +111,7 @@ class ItemVariantCreate(ItemVariantBase):
 class ItemVariantUpdate(SQLModel):
     """Partial update for existing variant"""
 
+    id: UUID | None = None
     size: str | None = None
     color: str | None = None
     image_url: str | None = Field(default=None, max_length=512)
@@ -137,3 +156,12 @@ class ItemVariantQuantity(SQLModel):
     quantity: int = Field(default=1, ge=1)
     price: int = Field(default=0, ge=0)
     deposit: int = Field(default=0, ge=0)
+    item_variant_price_id: UUID | None = None
+
+
+@event.listens_for(ItemVariant, "before_insert")
+@event.listens_for(ItemVariant, "before_update")
+def set_variant_identity_keys(_, __, variant: ItemVariant) -> None:
+    variant.size_key = ItemVariant._normalize_identity(variant.size)
+    variant.color_key = ItemVariant._normalize_identity(variant.color)
+    variant.active_identity_key = None if variant.is_archived else "active"

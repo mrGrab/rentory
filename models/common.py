@@ -34,7 +34,7 @@ class TimestampMixin(SQLModel):
 class ListQueryParams(BaseModel):
     """A container for parsed list query parameters"""
 
-    filters: dict[str, Any]
+    filters: dict[str, Any]  # pyright: ignore[reportExplicitAny]
     range_list: list[int]
     sort_field: str
     sort_order: str

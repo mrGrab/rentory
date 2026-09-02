@@ -49,15 +49,21 @@ def to_public(order: Order) -> OrderPublic:
     items = []
     for link in order.item_links:
         variant = link.item_variant
+        if variant is None or variant.item is None:
+            raise NotFoundException("Order has an invalid item variant link")
         item_info = OrderItemPublicInfo(
             item_id=variant.item_id,
             item_variant_id=link.item_variant_id,
-            title=variant.item.title,
-            size=variant.size,
-            color=variant.color,
+            title=link.item_title_snapshot or variant.item.title,
+            size=link.variant_size_snapshot or variant.size,
+            color=link.variant_color_snapshot or variant.color,
             quantity=link.quantity,
             price=link.price,
             deposit=link.deposit,
+            item_title_snapshot=link.item_title_snapshot,
+            variant_size_snapshot=link.variant_size_snapshot,
+            variant_color_snapshot=link.variant_color_snapshot,
+            price_type_snapshot=link.price_type_snapshot,
         )
         items.append(item_info)
 

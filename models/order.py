@@ -52,6 +52,10 @@ class OrderItemPublicInfo(SQLModel):
     quantity: int
     price: int
     deposit: int
+    item_title_snapshot: str | None = None
+    variant_size_snapshot: str | None = None
+    variant_color_snapshot: str | None = None
+    price_type_snapshot: str | None = None
 
 
 # ---------- Database Model ----------

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from sqlmodel import select
@@ -9,7 +9,8 @@ from core.exceptions import BadRequestException, ConflictException
 from core.logger import logger
 from core.query_gateway import QueryGateway
 from models.item import Item, ItemCreate, ItemFilters, ItemUpdate
-from models.item_variant import ItemVariantCreate, ItemVariantStatus
+from models.item_variant import ItemVariant, ItemVariantCreate, ItemVariantStatus
+from services.helpers import ensure_utc, validate_time_period
 from services.item_query_gateway import ItemQueryGateway
 from services.item_variant_service import ItemVariantService
 
@@ -95,6 +96,8 @@ class ItemService:
         item = Item(**item_data)
         self.session.add(item)
         self.session.flush()
+        if item.id is None:
+            raise BadRequestException("Item creation did not produce an ID")
 
         # Create variants if provided
         if item_in.variants:
@@ -127,9 +130,13 @@ class ItemService:
         """
         logger.debug(f"Updating item: {item.id}")
 
+        if item.id is None:
+            raise BadRequestException("Item must have an ID before it can be updated")
+
         update_data = item_in.model_dump(exclude={"variants"}, exclude_unset=True)
 
-        if not update_data and not item_in.variants:
+        variants_were_supplied = "variants" in item_in.model_fields_set
+        if not update_data and not variants_were_supplied:
             logger.warning("No data provided for update")
             raise BadRequestException("No data provided for update")
 
@@ -143,42 +150,92 @@ class ItemService:
                 logger.warning(f"Title '{title}' already exists")
                 raise ConflictException(f"Title '{title}' is already in use")
 
-        # Update item fields
-        for field, value in update_data.items():
-            setattr(item, field, value)
+        try:
+            # Update item fields
+            for field, value in update_data.items():
+                setattr(item, field, value)
 
-        existing_variants_map = {v.id: v for v in item.variants}
-        processed_variant_ids = set()
+            if variants_were_supplied:
+                if item_in.variants is None:
+                    raise BadRequestException("variants must be a list when supplied")
 
-        for variant_in in item_in.variants:
-            # New variant (no ID)
-            if not hasattr(variant_in, "id") or not variant_in.id:
-                variant_create = ItemVariantCreate(
-                    item_id=item.id, **variant_in.model_dump(exclude_unset=True)
+                existing_variants_map = {v.id: v for v in item.variants}
+                supplied_variant_ids = {
+                    variant_in.id
+                    for variant_in in item_in.variants
+                    if variant_in.id is not None
+                }
+
+                for variant_id in supplied_variant_ids:
+                    if variant_id not in existing_variants_map:
+                        raise BadRequestException(
+                            f"Variant {variant_id} does not belong to item {item.id}"
+                        )
+
+                # Archive removals before creating replacements
+                removed_variant_ids = set(existing_variants_map) - supplied_variant_ids
+                for variant_id in removed_variant_ids:
+                    logger.debug(f"Archiving variant {variant_id} (removed from item)")
+                    self.variant_service.delete(
+                        existing_variants_map[variant_id], commit=False
+                    )
+
+                # Removed variants are candidates for reuse
+                # by comparing them with the most recent ones.
+                reusable_variants = sorted(
+                    (existing_variants_map[vid] for vid in removed_variant_ids),
+                    key=lambda v: ensure_utc(v.updated_at),
+                    reverse=True,
                 )
-                self.variant_service.create(variant_create)
-                continue
 
-            # Update existing variant
-            if variant_in.id in existing_variants_map:
-                existing_variant = existing_variants_map[variant_in.id]
-                processed_variant_ids.add(existing_variant.id)
-                # Update in place
-                self.variant_service.update(existing_variant, variant_in)
-            else:
-                logger.warning(f"Variant {variant_in.id} not found, skipping")
+                def _pop_reusable_variant(
+                    size: str | None, color: str | None
+                ) -> ItemVariant | None:
+                    size_key = self.variant_service.normalize_identity(size)
+                    color_key = self.variant_service.normalize_identity(color)
+                    for index, candidate in enumerate(reusable_variants):
+                        if (
+                            candidate.size_key == size_key
+                            and candidate.color_key == color_key
+                        ):
+                            return reusable_variants.pop(index)
+                    return None
 
-        # Delete variants not in the update list
-        to_delete = set(existing_variants_map.keys()) - processed_variant_ids
-        for variant_id in to_delete:
-            logger.debug(f"Deleting variant {variant_id} (not in update list)")
-            self.variant_service.delete(existing_variants_map[variant_id])
+                for variant_in in item_in.variants:
+                    if variant_in.id is None:
+                        reused_variant = _pop_reusable_variant(
+                            variant_in.size, variant_in.color
+                        )
+                        if reused_variant is not None:
+                            logger.debug(
+                                f"Reusing archived variant {reused_variant.id} "
+                                + "for supplied variant with matching size/color"
+                            )
+                            self.variant_service.update(
+                                reused_variant,
+                                variant_in.model_copy(update={"is_archived": False}),
+                                commit=False,
+                            )
+                            continue
 
-        item.updated_at = datetime.now(UTC)
+                        variant_create = ItemVariantCreate(
+                            item_id=item.id,
+                            **variant_in.model_dump(exclude={"id"}, exclude_unset=True),
+                        )
+                        self.variant_service.create(variant_create, commit=False)
+                        continue
 
-        self.session.add(item)
-        self.session.commit()
-        self.session.refresh(item)
+                    existing_variant = existing_variants_map.get(variant_in.id)
+                    self.variant_service.update(
+                        existing_variant, variant_in, commit=False
+                    )
+
+                item.updated_at = datetime.now(UTC)
+                self.session.commit()
+                self.session.refresh(item)
+        except Exception:
+            self.session.rollback()
+            raise
 
         logger.info(f"Item updated successfully: {item.id}")
         return item
@@ -211,15 +268,18 @@ class ItemService:
         logger.info(f"Item deleted successfully: {item.id}")
 
     def check_availability(
-        self, item: Item, start_time, end_time, exclude_order_id: int | None = None
+        self,
+        item: Item,
+        start_time: date,
+        end_time: date,
+        exclude_order_id: int | None = None,
     ) -> tuple[Item, dict[UUID, int]]:
         """Check item variant availability for a time period.
 
         Returns (item, availability) where availability maps variant id to
         available_quantity, since that value isn't a persisted model field.
         """
-        if start_time > end_time:
-            raise BadRequestException("Start time must be before end time")
+        validate_time_period(start_time, end_time)
 
         logger.debug(
             f"Checking availability for item {item.id} from {start_time} to {end_time}"
@@ -228,6 +288,8 @@ class ItemService:
         # Update variant availability status
         availability: dict[UUID, int] = {}
         for variant in item.variants:
+            if variant.id is None:
+                continue
             is_available, available_quantity, reason = (
                 self.variant_service.check_availability(
                     variant, start_time, end_time, exclude_order_id
