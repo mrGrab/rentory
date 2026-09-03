@@ -54,10 +54,11 @@ def apply_sorting(stmt, model: object, sort_field: str, sort_order: str):
 
 def set_pagination_headers(
     response: Response,
+    *,
     count: int,
     total: int,
     offset: int,
-    resource_name: str = "items",
+    resource_name: str,
 ):
     """Sets standard pagination headers on the response."""
     end_index = offset + count - 1 if count > 0 else offset

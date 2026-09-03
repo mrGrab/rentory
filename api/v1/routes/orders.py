@@ -18,8 +18,9 @@ from models.order import (
     OrderUpdate,
 )
 from models.payment import PaymentPublic
-
-# --- Project Imports ---
+from services.helpers import display_color, display_size, display_title
+from services.invoice import generate_invoice_jpeg as invoice_generate_jpeg
+from services.invoice import generate_invoice_pdf
 from services.order_service import OrderService
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
@@ -54,9 +55,9 @@ def to_public(order: Order) -> OrderPublic:
         item_info = OrderItemPublicInfo(
             item_id=variant.item_id,
             item_variant_id=link.item_variant_id,
-            title=link.item_title_snapshot or variant.item.title,
-            size=link.variant_size_snapshot or variant.size,
-            color=link.variant_color_snapshot or variant.color,
+            title=display_title(link.item_title_snapshot, variant.item.title),
+            size=display_size(link.variant_size_snapshot, variant.size),
+            color=display_color(link.variant_color_snapshot, variant.color),
             quantity=link.quantity,
             price=link.price,
             deposit=link.deposit,
@@ -152,14 +153,13 @@ def create_order(
 def generate_invoice(
     current_user: CurrentUser,
     order: Annotated[Order, Depends(get_order_or_404)],
-    service: Annotated[OrderService, Depends(get_order_service)],
 ):
     """Generate invoice PDF for an order"""
     logger.debug(
         f"User {current_user.username} generating invoice for order {order.id}"
     )
 
-    pdf_bytes = service.generate_invoice_pdf(order)
+    pdf_bytes = generate_invoice_pdf(order)
 
     logger.info(f"Invoice generated for order {order.id}")
 
@@ -178,14 +178,13 @@ def generate_invoice(
 def generate_invoice_jpeg(
     current_user: CurrentUser,
     order: Annotated[Order, Depends(get_order_or_404)],
-    service: Annotated[OrderService, Depends(get_order_service)],
 ):
     """Generate a complete invoice JPEG for an order."""
     logger.debug(
         f"User {current_user.username} generating invoice JPEG for order {order.id}"
     )
 
-    jpeg_bytes = service.generate_invoice_jpeg(order)
+    jpeg_bytes = invoice_generate_jpeg(order)
 
     logger.info(f"Invoice JPEG generated for order {order.id}")
 

@@ -68,7 +68,13 @@ def list_users(
     )
 
     result = [UserPublic.model_validate(user) for user in users]
-    set_pagination_headers(response, offset, len(result), total)
+    set_pagination_headers(
+        response,
+        count=len(result),
+        total=total,
+        offset=offset,
+        resource_name="users",
+    )
 
     logger.info(f"Fetched {len(result)} users out of {total} total")
     return result

@@ -8,8 +8,6 @@ from core.database import (
     hash_password,
 )
 from core.exceptions import ConflictException
-
-# --- Project Imports ---
 from core.logger import logger
 from core.query_gateway import QueryGateway
 from models.user import User, UserCreate, UserFilters, UserUpdate

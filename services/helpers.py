@@ -26,3 +26,22 @@ def validate_time_period(start: date, end: date) -> None:
     """
     if start > end:
         raise BadRequestException("Start time must be before end time")
+
+
+def display_title(snapshot: str | None, live_value: str) -> str:
+    """Resolve an order line's displayed item title.
+
+    Prefers the historical snapshot captured on the order line; falls back
+    to the item's current title when the snapshot is missing or blank.
+    """
+    return snapshot or live_value
+
+
+def display_size(snapshot: str | None, live_value: str) -> str:
+    """Resolve an order line's displayed variant size (see `display_title`)."""
+    return snapshot or live_value
+
+
+def display_color(snapshot: str | None, live_value: str) -> str:
+    """Resolve an order line's displayed variant color (see `display_title`)."""
+    return snapshot or live_value
