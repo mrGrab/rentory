@@ -37,11 +37,17 @@ def display_title(snapshot: str | None, live_value: str) -> str:
     return snapshot or live_value
 
 
-def display_size(snapshot: str | None, live_value: str) -> str:
-    """Resolve an order line's displayed variant size (see `display_title`)."""
-    return snapshot or live_value
+def display_size(snapshot: str | None, live_value: str | None) -> str:
+    """Resolve an order line's displayed variant size (see `display_title`).
+
+    Size is optional on a variant, so this falls back to an empty string.
+    """
+    return snapshot or live_value or ""
 
 
-def display_color(snapshot: str | None, live_value: str) -> str:
-    """Resolve an order line's displayed variant color (see `display_title`)."""
-    return snapshot or live_value
+def display_color(snapshot: str | None, live_value: str | None) -> str:
+    """Resolve an order line's displayed variant color (see `display_title`).
+
+    Color is optional on a variant, so this falls back to an empty string.
+    """
+    return snapshot or live_value or ""

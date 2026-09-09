@@ -2,7 +2,7 @@ from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import inspect
-from sqlmodel import Session, func, select
+from sqlmodel import Session, select
 
 from core.exceptions import BadRequestException
 from core.logger import logger
@@ -396,8 +396,11 @@ class ItemVariantService:
             if service_end_date >= start_date:
                 effective_quantity -= variant.quantity_in_maintenance
 
-        # Sum booked quantities across all overlapping active orders
-        stmt = select(func.coalesce(func.sum(OrderItemLink.quantity), 0)).join(Order)
+        # Peak concurrently-booked quantity across overlapping active orders.
+        # Summing every overlapping booking would double-count sequential
+        # rentals (one returned the same day another goes out), so walk the
+        # timeline and take the maximum concurrent reservation instead.
+        stmt = select(Order).join(OrderItemLink)
         stmt = stmt.where(
             OrderItemLink.item_variant_id == variant.id,
             inspect(Order)
@@ -416,7 +419,20 @@ class ItemVariantService:
         # Exclude current order when updating
         if exclude_order_id:
             stmt = stmt.where(Order.id != exclude_order_id)
-        booked_quantity = self.session.exec(stmt).one()
+
+        events: dict[date, int] = {}
+        for order in self.session.exec(stmt).all():
+            link = next(
+                link for link in order.item_links if link.item_variant_id == variant.id
+            )
+            events[order.start_time] = events.get(order.start_time, 0) + link.quantity
+            end_after = date.fromordinal(order.end_time.toordinal() + 1)
+            events[end_after] = events.get(end_after, 0) - link.quantity
+
+        booked_quantity = concurrent = 0
+        for event_date in sorted(events):
+            concurrent += events[event_date]
+            booked_quantity = max(booked_quantity, concurrent)
 
         available_quantity = effective_quantity - booked_quantity
         if available_quantity <= 0:

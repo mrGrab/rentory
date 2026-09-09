@@ -68,7 +68,7 @@ def generate_invoice_pdf(order: Order) -> bytes:
 
     display_start = order.start_time
     display_end = (
-        order.end_time - timedelta(days=2) if is_postal_return else order.end_time
+        order.end_time - timedelta(days=3) if is_postal_return else order.end_time
     )
 
     invoice_data = {

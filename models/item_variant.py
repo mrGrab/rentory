@@ -3,7 +3,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
-from sqlalchemy import UniqueConstraint, event
+from sqlalchemy import UniqueConstraint, event, text
 from sqlmodel import Field, Relationship, SQLModel
 
 from models.common import TimestampMixin, UUIDMixin
@@ -60,8 +60,16 @@ class ItemVariant(UUIDMixin, TimestampMixin, SQLModel, table=True):
     service_start_time: date | None = None
     service_end_time: date | None = None
     is_archived: bool = Field(default=False, index=True)
-    size_key: str = Field(default="", max_length=50)
-    color_key: str = Field(default="", max_length=50)
+    size_key: str = Field(
+        default="",
+        max_length=50,
+        sa_column_kwargs={"server_default": text("''")},
+    )
+    color_key: str = Field(
+        default="",
+        max_length=50,
+        sa_column_kwargs={"server_default": text("''")},
+    )
     active_identity_key: str | None = Field(default=None, max_length=64)
     status: ItemVariantStatus = Field(default=ItemVariantStatus.AVAILABLE, index=True)
 
