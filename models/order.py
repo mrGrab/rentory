@@ -39,6 +39,8 @@ class DeliveryInfo(SQLModel):
     delivery_address: str | None = None
     return_address: str | None = None
     tracking_number: str | None = None
+    # Days before end_time the client must send items back; shown on the invoice.
+    return_offset_days: int = Field(default=0, ge=0)
 
 
 class OrderItemPublicInfo(SQLModel):

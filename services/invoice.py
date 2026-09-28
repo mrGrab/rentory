@@ -58,18 +58,18 @@ def generate_invoice_pdf(order: Order) -> bytes:
     if isinstance(delivery, DeliveryInfo):
         pickup_type = delivery.pickup_type
         return_type = delivery.return_type
+        return_offset_days = delivery.return_offset_days
     else:
         delivery_data = delivery or {}
         pickup_type = delivery_data.get("pickup_type", "")
         return_type = delivery_data.get("return_type", "")
+        return_offset_days = delivery_data.get("return_offset_days", 0)
 
     is_postal_pickup = pickup_type == "postal_service"
     is_postal_return = return_type == "postal_service"
 
     display_start = order.start_time
-    display_end = (
-        order.end_time - timedelta(days=3) if is_postal_return else order.end_time
-    )
+    display_end = order.end_time - timedelta(days=return_offset_days)
 
     invoice_data = {
         "order": order,
