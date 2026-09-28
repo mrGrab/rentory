@@ -43,4 +43,5 @@ python_files = [
     "*_route.py",
     "*_routes.py",
     "*_service.py",
+    "*_query_gateway.py",
 ]

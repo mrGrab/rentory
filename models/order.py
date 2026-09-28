@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import field_validator
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 
-from models.common import TimestampMixin
+from models.common import TimestampMixin, normalize_instagram
 from models.payment import Payment, PaymentBase, PaymentPublic
 
 if TYPE_CHECKING:
@@ -141,9 +141,14 @@ class OrderFilters(SQLModel):
     pickup_type: PickupType | None = None
     phone: str | None = None
     client_name: str | None = None
+    instagram: str | None = None
     item_ids: list[UUID] | None = None
     is_archived: bool | None = None
     created_at: datetime | None = None
+
+    _normalize_instagram = field_validator("instagram", mode="before")(
+        normalize_instagram
+    )
 
     @field_validator("status", mode="before")
     @classmethod
@@ -159,7 +164,7 @@ class OrderFilters(SQLModel):
     @classmethod
     def parse_id_to_list(cls, value: Any) -> list[int] | None:
         if value is None or value == "":
-            return value
+            return None
 
         # Accept list of IDs directly
         if isinstance(value, list):

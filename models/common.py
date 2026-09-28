@@ -6,6 +6,14 @@ from pydantic import BaseModel
 from sqlmodel import Field, SQLModel
 
 
+def normalize_instagram(value: Any) -> Any:
+    """Canonical Instagram handle: trimmed, no leading '@', lowercase, None if empty."""
+    if not isinstance(value, str):
+        return value
+    value = value.strip().removeprefix("@").strip().lower()
+    return value or None
+
+
 class UUIDMixin(SQLModel):
     """Mixin for models with UUID primary key"""
 

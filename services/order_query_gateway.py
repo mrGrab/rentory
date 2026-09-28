@@ -2,7 +2,7 @@ from datetime import date
 from uuid import UUID
 
 from sqlalchemy.sql.expression import Select
-from sqlmodel import func
+from sqlmodel import col, func
 
 from core.sqlmodel_query_gateway import SQLModelQueryGateway
 from models.client import Client
@@ -15,45 +15,53 @@ def _filter_by_ids(stmt: Select, order_ids: int | list[int] | None) -> Select:
     if not order_ids:
         return stmt
     if isinstance(order_ids, list):
-        return stmt.where(Order.id.in_(order_ids))
-    return stmt.where(Order.id == order_ids)
+        return stmt.where(col(Order.id).in_(order_ids))
+    return stmt.where(col(Order.id) == order_ids)
 
 
 def _filter_by_client(
-    stmt: Select, phone: str | None, client_name: str | None
+    stmt: Select,
+    phone: str | None,
+    client_name: str | None,
+    instagram: str | None,
 ) -> Select:
-    """Filter by client phone and/or name (given_name or surname)."""
-    if not phone and not client_name:
+    """Filter by client phone, name (given_name or surname) and/or instagram."""
+    if not phone and not client_name and not instagram:
         return stmt
 
     stmt = stmt.join(Client)
 
     if phone:
-        stmt = stmt.where(Client.phone.ilike(f"%{phone}%"))
+        stmt = stmt.where(col(Client.phone).ilike(f"%{phone}%"))
 
     if client_name:
         stmt = stmt.where(
-            (Client.given_name.ilike(f"%{client_name}%"))
-            | (Client.surname.ilike(f"%{client_name}%"))
+            (col(Client.given_name).ilike(f"%{client_name}%"))
+            | (col(Client.surname).ilike(f"%{client_name}%"))
         )
+
+    if instagram:
+        stmt = stmt.where(col(Client.instagram).ilike(f"%{instagram}%"))
 
     return stmt
 
 
 def _filter_by_time_range(stmt: Select, start: date | None, end: date | None) -> Select:
     if start and end:
-        return stmt.where(Order.end_time >= start, Order.start_time <= end)
+        return stmt.where(col(Order.end_time) >= start, col(Order.start_time) <= end)
     if end:
-        return stmt.where(Order.end_time == end)
+        return stmt.where(col(Order.end_time) == end)
     if start:
-        return stmt.where(Order.start_time == start)
+        return stmt.where(col(Order.start_time) == start)
     return stmt
 
 
 def _filter_by_item_ids(stmt: Select, item_ids: list[UUID] | None) -> Select:
     if item_ids:
-        stmt = stmt.join(Order.item_links).join(OrderItemLink.item_variant)
-        return stmt.where(ItemVariant.item_id.in_(item_ids))
+        stmt = stmt.join(
+            OrderItemLink, col(OrderItemLink.order_id) == col(Order.id)
+        ).join(ItemVariant, col(OrderItemLink.item_variant_id) == col(ItemVariant.id))
+        return stmt.where(col(ItemVariant.item_id).in_(item_ids))
     return stmt
 
 
@@ -62,24 +70,28 @@ def apply_order_filters(stmt: Select, filters: OrderFilters) -> Select:
 
     # Exclude archived by default unless explicitly filtered.
     if filters.is_archived is None:
-        stmt = stmt.where(Order.is_archived == False)
+        stmt = stmt.where(col(Order.is_archived) == False)
     else:
-        stmt = stmt.where(Order.is_archived == filters.is_archived)
+        stmt = stmt.where(col(Order.is_archived) == filters.is_archived)
 
     if filters.client_id:
-        stmt = stmt.where(Order.client_id == filters.client_id)
+        stmt = stmt.where(col(Order.client_id) == filters.client_id)
     if filters.status:
-        stmt = stmt.where(Order.status.in_(filters.status))
+        stmt = stmt.where(col(Order.status).in_(filters.status))
     if filters.pickup_type:
-        stmt = stmt.where(Order.delivery_info["pickup_type"] == filters.pickup_type)
+        stmt = stmt.where(
+            col(Order.delivery_info)["pickup_type"] == filters.pickup_type
+        )
 
     stmt = _filter_by_ids(stmt, filters.id)
-    stmt = _filter_by_client(stmt, filters.phone, filters.client_name)
+    stmt = _filter_by_client(
+        stmt, filters.phone, filters.client_name, filters.instagram
+    )
     stmt = _filter_by_time_range(stmt, filters.start_time, filters.end_time)
     stmt = _filter_by_item_ids(stmt, filters.item_ids)
 
     if filters.tag:
-        stmt = stmt.where(Order.tags.contains([filters.tag]))
+        stmt = stmt.where(col(Order.tags).contains([filters.tag]))
     if filters.created_at:
         stmt = stmt.where(func.date(Order.created_at) == filters.created_at.date())
 

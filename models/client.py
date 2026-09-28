@@ -1,11 +1,11 @@
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from pydantic_extra_types.phone_numbers import PhoneNumber
 from sqlmodel import Field, Relationship, SQLModel
 
-from models.common import TimestampMixin, UUIDMixin
+from models.common import TimestampMixin, UUIDMixin, normalize_instagram
 
 if TYPE_CHECKING:
     from models.order import Order
@@ -40,12 +40,15 @@ class Client(UUIDMixin, TimestampMixin, table=True):
 class ClientBase(SQLModel):
     given_name: str | None = None
     surname: str | None = None
-    phone: Phone | None = None
     instagram: str | None = None
     email: EmailStr | None = None
     notes: str | None = None
     discount: int | None = Field(default=None, ge=0, le=100)
     is_trusted: bool = False
+
+    _normalize_instagram = field_validator("instagram", mode="before")(
+        normalize_instagram
+    )
 
 
 class ClientCreate(ClientBase):
@@ -57,6 +60,7 @@ class ClientCreate(ClientBase):
 class ClientUpdate(ClientBase):
     """Partial update for existing client"""
 
+    phone: Phone | None = None
     is_archived: bool | None = None
 
 
@@ -64,6 +68,7 @@ class ClientPublic(ClientBase):
     """Public-facing representation of a client"""
 
     id: UUID
+    phone: Phone | None = None
     order_ids: list[int] = Field(default_factory=list)
 
 
@@ -79,3 +84,7 @@ class ClientFilters(BaseModel):
     discount: int | None = None
     is_archived: bool | None = None
     is_trusted: bool | None = None
+
+    _normalize_instagram = field_validator("instagram", mode="before")(
+        normalize_instagram
+    )
