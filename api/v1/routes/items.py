@@ -11,7 +11,14 @@ from core.exceptions import NotFoundException
 # --- Project Imports ---
 from core.logger import logger
 from core.query_utils import calculate_pagination, parse_params, set_pagination_headers
-from models.item import Item, ItemCreate, ItemFilters, ItemPublic, ItemUpdate
+from models.item import (
+    AvailabilityBatchRequest,
+    Item,
+    ItemCreate,
+    ItemFilters,
+    ItemPublic,
+    ItemUpdate,
+)
 from models.item_variant import ItemVariant, ItemVariantPublicInternal
 from services.item_service import ItemService
 
@@ -48,7 +55,7 @@ def to_public(item: Item, availability: dict[UUID, int] | None = None) -> ItemPu
     for variant in item.variants:
         if not variant.is_archived:
             update = {}
-            if availability is not None:
+            if availability is not None and variant.id is not None:
                 update["available_quantity"] = availability.get(variant.id)
             public_variants.append(
                 ItemVariantPublicInternal.model_validate(variant, update=update)
@@ -215,15 +222,39 @@ def check_availability(
         f"User {current_user.username} checking availability for item {item.id}"
     )
 
-    # Check availability if time range is provided
-    availability = None
-    if start_time and end_time:
-        item, availability = service.check_availability(
-            item, start_time, end_time, exclude_order_id
-        )
+    with service.session.no_autoflush:
+        availability = None
+        if start_time and end_time:
+            item, availability = service.check_availability(
+                item, start_time, end_time, exclude_order_id
+            )
+        result = to_public(item, availability)
 
     logger.info(f"Availability checked for item {item.id}")
-    return to_public(item, availability)
+    return result
+
+
+@router.post("/availability/batch", response_model=list[ItemPublic])
+def check_availability_batch(
+    request: AvailabilityBatchRequest,
+    current_user: CurrentUser,
+    service: Annotated[ItemService, Depends(get_item_service)],
+):
+    """Check several items using one request and database session."""
+    item_ids = list(dict.fromkeys(request.item_ids))
+    items = service.get_by_ids_for_availability(item_ids)
+
+    result = []
+    with service.session.no_autoflush:
+        checked = service.check_availability_many(
+            items, request.start_time, request.end_time, request.exclude_order_id
+        )
+        for item, availability in checked:
+            result.append(to_public(item, availability))
+    logger.info(
+        f"User {current_user.username} checked availability for {len(items)} items"
+    )
+    return result
 
 
 @router.put(

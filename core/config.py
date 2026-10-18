@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     MYSQL_USER: str | None = None
     MYSQL_PASSWORD: str | None = None
     MYSQL_DATABASE: str | None = None
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_LONG_CHECKOUT_SECONDS: float = 5.0
 
     @computed_field
     @property

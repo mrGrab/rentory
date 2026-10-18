@@ -1,10 +1,13 @@
 # Core database functionality
 import secrets
 from collections.abc import Generator
+from time import monotonic
 from typing import Annotated
 
 from argon2 import PasswordHasher
 from fastapi import Depends
+from sqlalchemy import event
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, SQLModel, create_engine, func, select
 
 # --- Project Imports ---
@@ -13,7 +16,33 @@ from core.exceptions import InternalErrorException
 from core.logger import logger
 from models.user import User, UserCreate
 
-engine = create_engine(settings.database_url, echo=False)
+engine = create_engine(
+    settings.database_url,
+    echo=False,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+)
+
+
+@event.listens_for(engine, "checkout")
+def _record_checkout(dbapi_connection, connection_record, connection_proxy) -> None:
+    connection_record.info["checkout_started_at"] = monotonic()
+
+
+@event.listens_for(engine, "checkin")
+def _log_long_checkout(dbapi_connection, connection_record) -> None:
+    started_at = connection_record.info.pop("checkout_started_at", None)
+    if started_at is None:
+        return
+    held_seconds = monotonic() - started_at
+    if held_seconds >= settings.DB_LONG_CHECKOUT_SECONDS:
+        logger.warning(
+            "Database connection held for %.2f seconds; %s",
+            held_seconds,
+            engine.pool.status(),
+        )
+
+
 ph = PasswordHasher()
 
 
@@ -64,7 +93,7 @@ def create_user(session: Session, user_in: UserCreate) -> User:
         session.refresh(db_user)
         logger.info(f"User {db_user.username} created successfully (id={db_user.id})")
         return db_user
-    except Exception as e:
+    except SQLAlchemyError as e:
         session.rollback()
         logger.error(f"Error creating user '{user_in.username}': {e}")
         raise InternalErrorException(

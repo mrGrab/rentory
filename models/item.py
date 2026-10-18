@@ -1,3 +1,4 @@
+from datetime import date
 from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -75,6 +76,13 @@ class ItemPublic(ItemBase):
     id: UUID
     variants: list[ItemVariantPublicInternal] = Field(default_factory=list)
     order_ids: list[int] = Field(default_factory=list)
+
+
+class AvailabilityBatchRequest(SQLModel):
+    item_ids: list[UUID] = Field(min_length=1, max_length=100)
+    start_time: date
+    end_time: date
+    exclude_order_id: int | None = None
 
 
 class ItemFilters(SQLModel):

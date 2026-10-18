@@ -124,7 +124,7 @@ class ItemVariantUpdate(SQLModel):
     color: str | None = None
     image_url: str | None = Field(default=None, max_length=512)
     status: ItemVariantStatus | None = None
-    quantity: int | None = None
+    quantity: int | None = Field(default=None, ge=0)
     quantity_in_maintenance: int | None = None
     service_start_time: date | None = None
     service_end_time: date | None = None

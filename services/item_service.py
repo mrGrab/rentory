@@ -1,7 +1,10 @@
 from datetime import UTC, date, datetime
+from typing import Any, cast
 from uuid import UUID
 
-from sqlmodel import Session, select
+from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import QueryableAttribute
+from sqlmodel import Session, col, select
 
 # --- Project Imports ---
 from core.database import SessionDep
@@ -40,6 +43,24 @@ class ItemService:
         """
         logger.debug(f"Fetching item by ID: {item_id}")
         return self.query_gateway.get_by_id(item_id)
+
+    def get_by_ids_for_availability(self, item_ids: list[UUID]) -> list[Item]:
+        """Load requested items and relationships for one availability response."""
+        variants = cast(QueryableAttribute[Any], Item.variants)
+        stmt = (
+            select(Item)
+            .where(col(Item.id).in_(item_ids))
+            .options(
+                selectinload(variants).selectinload(
+                    cast(QueryableAttribute[Any], ItemVariant.prices)
+                ),
+                selectinload(variants).selectinload(
+                    cast(QueryableAttribute[Any], ItemVariant.order_links)
+                ),
+            )
+        )
+        items_by_id = {item.id: item for item in self.session.exec(stmt).all()}
+        return [items_by_id[item_id] for item_id in item_ids if item_id in items_by_id]
 
     def get_items(
         self,
@@ -271,8 +292,12 @@ class ItemService:
             )
             return
 
+        item_id = item.id
+        if item_id is None:
+            raise BadRequestException("Item must have an ID before adding a variant")
+
         variant_create = ItemVariantCreate(
-            item_id=item.id,
+            item_id=item_id,
             **variant_in.model_dump(exclude={"id"}, exclude_unset=True),
         )
         _ = self.variant_service.create(variant_create, commit=False)
@@ -316,32 +341,44 @@ class ItemService:
         Returns (item, availability) where availability maps variant id to
         available_quantity, since that value isn't a persisted model field.
         """
+        return self.check_availability_many(
+            [item], start_time, end_time, exclude_order_id
+        )[0]
+
+    def check_availability_many(
+        self,
+        items: list[Item],
+        start_time: date,
+        end_time: date,
+        exclude_order_id: int | None = None,
+    ) -> list[tuple[Item, dict[UUID, int]]]:
+        """Check multiple items against one set of overlapping bookings."""
         validate_time_period(start_time, end_time)
 
-        logger.debug(
-            f"Checking availability for item {item.id} from {start_time} to {end_time}"
+        checks = self.variant_service.check_availabilities(
+            [variant for item in items for variant in item.variants],
+            start_time,
+            end_time,
+            exclude_order_id,
         )
 
-        # Update variant availability status
-        availability: dict[UUID, int] = {}
-        for variant in item.variants:
-            if variant.id is None:
-                continue
-            is_available, available_quantity, reason = (
-                self.variant_service.check_availability(
-                    variant, start_time, end_time, exclude_order_id
-                )
-            )
+        results = []
+        for item in items:
+            availability: dict[UUID, int] = {}
+            for variant in item.variants:
+                if variant.id is None:
+                    continue
+                is_available, available_quantity, reason = checks[variant.id]
+                availability[variant.id] = available_quantity
 
-            availability[variant.id] = available_quantity
+                if not is_available:
+                    logger.debug(reason)
+                    if variant.status != ItemVariantStatus.CLEANING:
+                        variant.status = ItemVariantStatus.UNAVAILABLE
 
-            if not is_available:
-                logger.debug(reason)
-                if variant.status != ItemVariantStatus.CLEANING:
-                    variant.status = ItemVariantStatus.UNAVAILABLE
-
-        logger.info(f"Availability checked for item {item.id}")
-        return item, availability
+            results.append((item, availability))
+            logger.info(f"Availability checked for item {item.id}")
+        return results
 
     def get_distinct_field_values(self, model: type, field_name: str) -> list[str]:
         """
