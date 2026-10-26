@@ -10,12 +10,10 @@ from api.v1.routes import (
     orders,
     upload,
     users,
-    version,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["API v1"])
 router.include_router(login.router)
-router.include_router(version.router)
 router.include_router(users.router)
 router.include_router(items.router)
 router.include_router(item_variants.router)

@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from api.main import router as api_router
+from api.system import router as system_router
 from core.config import settings
 from core.database import create_db_and_tables
 from core.logger import LOG_LEVELS, LOGGING_CONFIG, logger
@@ -68,7 +69,8 @@ def robots():
     return """User-agent: *\nDisallow: /"""
 
 
-# Include API router
+# Include routers
+app.include_router(system_router)
 app.include_router(api_router)
 
 # Static files

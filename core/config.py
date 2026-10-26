@@ -17,7 +17,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     # App
-    VERSION: str = "0.1.0"
+    VERSION: str = "0.1.1"
     APP_HOST: str = "127.0.0.1"
     APP_PORT: int = 5233
     LOG_LEVEL: str = "info"
@@ -29,9 +29,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_HOURS: int = 12
     REFRESH_TOKEN_EXPIRE_HOURS: int = 120
-    ACCESS_TOKEN_SECRET_KEY: str | None = None
-    REFRESH_TOKEN_SECRET_KEY: str | None = None
-    SESSION_SECRET_KEY: str | None = None
+    # Empty means unset; _validate_secrets fills or rejects them
+    ACCESS_TOKEN_SECRET_KEY: str = ""
+    REFRESH_TOKEN_SECRET_KEY: str = ""
+    SESSION_SECRET_KEY: str = ""
 
     @model_validator(mode="after")
     def _validate_secrets(self) -> Settings:
@@ -90,6 +91,8 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     DB_LONG_CHECKOUT_SECONDS: float = 5.0
+    # Must stay below MariaDB wait_timeout
+    DB_POOL_RECYCLE_SECONDS: int = 3600
 
     @computed_field
     @property
