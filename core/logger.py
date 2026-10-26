@@ -23,10 +23,6 @@ LOGGING_CONFIG = {
             "()": "uvicorn.logging.AccessFormatter",
             "fmt": '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
         },
-        "journal": {
-            "()": "logging.Formatter",
-            "fmt": "%(message)s",
-        },
     },
     "handlers": {
         "default": {
@@ -38,11 +34,6 @@ LOGGING_CONFIG = {
             "formatter": "access",
             "class": "logging.StreamHandler",
             "stream": "ext://sys.stdout",
-        },
-        "journal": {
-            "class": "systemd.journal.JournalHandler",
-            "formatter": "journal",
-            "SYSLOG_IDENTIFIER": "Rentory",
         },
     },
     "loggers": {

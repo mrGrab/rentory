@@ -116,7 +116,6 @@ sqlmodel==0.0.42
     # via rentory (pyproject.toml)
 starlette==1.6.0
     # via fastapi
-systemd-python==235
     # via rentory (pyproject.toml)
 tinycss2==1.5.1
     # via

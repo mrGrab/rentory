@@ -23,7 +23,6 @@ dependencies = [
     "pyjwt>=2.13.0",
     "python-multipart>=0.0.32",
     "sqlmodel>=0.0.42",
-    "systemd-python>=235",
     "uvicorn>=0.52.4",
     "weasyprint>=69.0",
 ]

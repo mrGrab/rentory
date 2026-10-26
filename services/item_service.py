@@ -365,18 +365,44 @@ class ItemService:
         results = []
         for item in items:
             availability: dict[UUID, int] = {}
+            variants = []
             for variant in item.variants:
                 if variant.id is None:
+                    variants.append(variant)
                     continue
                 is_available, available_quantity, reason = checks[variant.id]
                 availability[variant.id] = available_quantity
 
+                status = variant.status
                 if not is_available:
                     logger.debug(reason)
-                    if variant.status != ItemVariantStatus.CLEANING:
-                        variant.status = ItemVariantStatus.UNAVAILABLE
+                    status = ItemVariantStatus.UNAVAILABLE
+                elif status == ItemVariantStatus.CLEANING:
+                    overlaps = (
+                        variant.service_start_time is None
+                        or variant.service_start_time <= end_time
+                    ) and (
+                        variant.service_end_time is None
+                        or variant.service_end_time >= start_time
+                    )
+                    if not overlaps:
+                        status = ItemVariantStatus.AVAILABLE
 
-            results.append((item, availability))
+                # Availability status belongs to this response, not the stored
+                # inventory record. Include relationships needed by serialization.
+                variants.append(
+                    variant.model_copy(
+                        update={
+                            "status": status,
+                            "prices": variant.prices,
+                            "order_links": variant.order_links,
+                        }
+                    )
+                )
+
+            results.append(
+                (item.model_copy(update={"variants": variants}), availability)
+            )
             logger.info(f"Availability checked for item {item.id}")
         return results
 
