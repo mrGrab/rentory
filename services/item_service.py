@@ -377,16 +377,13 @@ class ItemService:
                 if not is_available:
                     logger.debug(reason)
                     status = ItemVariantStatus.UNAVAILABLE
-                elif status == ItemVariantStatus.CLEANING:
-                    overlaps = (
-                        variant.service_start_time is None
-                        or variant.service_start_time <= end_time
-                    ) and (
-                        variant.service_end_time is None
-                        or variant.service_end_time >= start_time
-                    )
-                    if not overlaps:
-                        status = ItemVariantStatus.AVAILABLE
+                elif status in (
+                    ItemVariantStatus.CLEANING,
+                    ItemVariantStatus.REPAIR,
+                ) and not self.variant_service.service_window_overlaps(
+                    variant, start_time, end_time
+                ):
+                    status = ItemVariantStatus.AVAILABLE
 
                 # Availability status belongs to this response, not the stored
                 # inventory record. Include relationships needed by serialization.

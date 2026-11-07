@@ -483,12 +483,16 @@ class OrderService:
         if not items_to_validate:
             raise BadRequestException("Order must contain items")
 
-        # Closing an order (DONE/RETURNED) hands the item back rather than
-        # booking it out, so maintenance/availability no longer applies.
+        # Closing an order (DONE/RETURNED/CANCELED) hands the item back rather
+        # than booking it out, so maintenance/availability no longer applies.
         effective_status = (
             order_in.status if order_in.status is not None else order.status
         )
-        if effective_status in (OrderStatus.DONE, OrderStatus.RETURNED):
+        if effective_status in (
+            OrderStatus.DONE,
+            OrderStatus.RETURNED,
+            OrderStatus.CANCELED,
+        ):
             return
 
         self.validate_order_items(

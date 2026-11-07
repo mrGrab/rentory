@@ -30,6 +30,36 @@ class ItemVariantService:
             ItemVariantQueryGateway(session)
         )
 
+    @staticmethod
+    def service_window_overlaps(
+        variant: ItemVariant, start_time: date, end_time: date
+    ) -> bool:
+        """Whether the period touches the variant's service window.
+
+        Both ends are inclusive (a same-day handover is a conflict). A missing
+        service start or end date leaves that side of the window open.
+        """
+        start_date = (
+            start_time.date() if isinstance(start_time, datetime) else start_time
+        )
+        end_date = end_time.date() if isinstance(end_time, datetime) else end_time
+        return (
+            variant.service_start_time is None or variant.service_start_time <= end_date
+        ) and (
+            variant.service_end_time is None or variant.service_end_time >= start_date
+        )
+
+    @staticmethod
+    def _validate_maintenance(
+        status: ItemVariantStatus, quantity: int, quantity_in_maintenance: int
+    ) -> None:
+        if quantity_in_maintenance > quantity:
+            raise BadRequestException("quantity_in_maintenance cannot exceed quantity")
+        if status == ItemVariantStatus.REPAIR and quantity_in_maintenance < 1:
+            raise BadRequestException(
+                "quantity_in_maintenance must be at least 1 for a variant in repair"
+            )
+
     def get_by_id(self, variant_id: UUID) -> ItemVariant | None:
         logger.debug(f"Fetching variant by ID: {variant_id}")
         return self.query_gateway.get_by_id(variant_id)
@@ -61,8 +91,9 @@ class ItemVariantService:
         """Create a new item variant"""
         logger.debug(f"Creating new variant for item {variant_in.item_id}")
 
-        if variant_in.quantity_in_maintenance > variant_in.quantity:
-            raise BadRequestException("quantity_in_maintenance cannot exceed quantity")
+        self._validate_maintenance(
+            variant_in.status, variant_in.quantity, variant_in.quantity_in_maintenance
+        )
 
         self._validate_variant_identity(
             item_id=variant_in.item_id,
@@ -165,8 +196,12 @@ class ItemVariantService:
             if variant_in.quantity_in_maintenance is not None
             else variant.quantity_in_maintenance
         )
-        if new_quantity_in_maintenance > new_quantity:
-            raise BadRequestException("quantity_in_maintenance cannot exceed quantity")
+        new_status = (
+            variant_in.status if variant_in.status is not None else variant.status
+        )
+        self._validate_maintenance(
+            new_status, new_quantity, new_quantity_in_maintenance
+        )
         if new_quantity < self._maximum_reserved_quantity(variant.id):
             raise BadRequestException(
                 "quantity cannot be lower than the maximum concurrently reserved quantity"
@@ -453,16 +488,10 @@ class ItemVariantService:
 
             effective_quantity = variant.quantity
             if (
-                variant.service_end_time
-                and variant.status != ItemVariantStatus.CLEANING
+                variant.status != ItemVariantStatus.CLEANING
+                and self.service_window_overlaps(variant, start_time, end_time)
             ):
-                start_date = (
-                    start_time.date()
-                    if isinstance(start_time, datetime)
-                    else start_time
-                )
-                if variant.service_end_time >= start_date:
-                    effective_quantity -= variant.quantity_in_maintenance
+                effective_quantity -= variant.quantity_in_maintenance
 
             booked_quantity = concurrent = 0
             for event_date, change in sorted(events_by_variant[variant.id].items()):

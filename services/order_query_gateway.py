@@ -9,6 +9,7 @@ from models.client import Client
 from models.item_variant import ItemVariant
 from models.links import OrderItemLink
 from models.order import Order, OrderFilters
+from services.helpers import json_array_contains
 
 
 def _filter_by_ids(stmt: Select, order_ids: int | list[int] | None) -> Select:
@@ -91,7 +92,7 @@ def apply_order_filters(stmt: Select, filters: OrderFilters) -> Select:
     stmt = _filter_by_item_ids(stmt, filters.item_ids)
 
     if filters.tag:
-        stmt = stmt.where(col(Order.tags).contains([filters.tag]))
+        stmt = stmt.where(json_array_contains(col(Order.tags), filters.tag))
     if filters.created_at:
         stmt = stmt.where(func.date(Order.created_at) == filters.created_at.date())
 

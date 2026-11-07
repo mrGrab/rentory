@@ -4,6 +4,7 @@ from sqlmodel import Session, col
 from core.sqlmodel_query_gateway import SQLModelQueryGateway
 from models.item import Item, ItemFilters
 from models.item_variant import ItemVariant
+from services.helpers import json_array_contains
 
 
 def apply_item_filters(
@@ -34,7 +35,7 @@ def apply_item_filters(
     if filters.status:
         stmt = stmt.where(col(Item.status) == filters.status.value)
     if filters.tag:
-        stmt = stmt.where(col(Item.tags).contains(filters.tag))
+        stmt = stmt.where(json_array_contains(col(Item.tags), filters.tag))
     if filters.color:
         stmt = stmt.where(col(ItemVariant.color) == filters.color)
     if filters.size:
