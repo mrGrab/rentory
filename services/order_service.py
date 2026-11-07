@@ -6,11 +6,17 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import QueryableAttribute
 from sqlmodel import Session, col, select
 
-from core.exceptions import BadRequestException, ConflictException
+from core.exceptions import (
+    BadRequestException,
+    InternalErrorException,
+    Shortfall,
+    UnavailableError,
+)
 
 # --- Project Imports ---
 from core.logger import logger
 from core.query_gateway import QueryGateway
+from core.transaction import transaction
 from models.client import Client
 from models.item_variant import ItemVariant, ItemVariantQuantity
 from models.links import OrderItemLink
@@ -18,12 +24,17 @@ from models.order import (
     Order,
     OrderCreate,
     OrderFilters,
-    OrderStatus,
     OrderUpdate,
 )
 from models.payment import Payment, PaymentBase
+from services.booking_availability import (
+    BookingAvailability,
+    BookingContext,
+    BookingLine,
+    NewBooking,
+    OrderEdit,
+)
 from services.helpers import validate_time_period
-from services.item_variant_service import ItemVariantService
 from services.order_query_gateway import OrderQueryGateway
 
 
@@ -32,7 +43,7 @@ class OrderService:
 
     def __init__(self, session):
         self.session: Session = session
-        self.item_variant_service = ItemVariantService(session)
+        self.booking_availability = BookingAvailability(session)
         self.query_gateway: QueryGateway[Order, OrderFilters] = OrderQueryGateway(
             session
         )
@@ -121,46 +132,15 @@ class OrderService:
             if variant.id is not None
         }
 
-    def check_variant_availability(
-        self,
-        variant_id: UUID,
-        start_time: date,
-        end_time: date,
-        requested_quantity: int = 1,
-        exclude_order_id: int | None = None,
-    ) -> tuple[bool, str | None]:
-        """Check if variant is available for booking period.
-
-        Delegates the actual availability math (archived/maintenance/bookings)
-        to ItemVariantService, the single source of truth for that logic.
-        """
-        variant = self.session.get(ItemVariant, variant_id)
-        if not variant:
-            return False, f"Variant {variant_id} not found"
-
-        _, available_quantity, _ = self.item_variant_service.check_availability(
-            variant, start_time, end_time, exclude_order_id
-        )
-
-        if available_quantity < requested_quantity:
-            message = (
-                f"Variant {variant_id}: {available_quantity} unit(s) available, "
-                f"requested {requested_quantity}"
-            )
-            return False, message
-
-        return True, None
-
     def validate_order_items(
         self,
         items: list[ItemVariantQuantity],
         start_time: date,
         end_time: date,
-        exclude_order_id: int | None = None,
-        existing_links: dict[UUID, OrderItemLink] | None = None,
+        context: BookingContext,
         variants_by_id: dict[UUID, ItemVariant] | None = None,
     ) -> dict[UUID, ItemVariant]:
-        """Validate all items in order are available"""
+        """Validate the requested items and that they can be booked."""
         if not items:
             raise BadRequestException("Order must contain at least one item")
 
@@ -169,44 +149,40 @@ class OrderService:
             if variants_by_id is not None
             else self._load_order_variants(items)
         )
-        checks = self.item_variant_service.check_availabilities(
-            list(variants_by_id.values()), start_time, end_time, exclude_order_id
+        shortfalls = [
+            shortfall
+            for item in items
+            if (shortfall := self._item_request_shortfall(item, variants_by_id))
+        ]
+        if shortfalls:
+            error = UnavailableError(shortfalls)
+            logger.warning(f"Validation failed: {error.message}")
+            raise error
+
+        self.booking_availability.ensure_bookable(
+            [
+                BookingLine(variants_by_id[item.item_variant_id], item.quantity)
+                for item in items
+            ],
+            start_time,
+            end_time,
+            context,
         )
-        unavailable_variants = []
-
-        for item in items:
-            variant = variants_by_id.get(item.item_variant_id)
-            if variant is None:
-                unavailable_variants.append(f"Variant {item.item_variant_id} not found")
-                continue
-            if variant.item_id != item.item_id:
-                unavailable_variants.append(
-                    f"Variant {item.item_variant_id} does not belong to item {item.item_id}"
-                )
-                continue
-            existing_link = (
-                existing_links.get(item.item_variant_id) if existing_links else None
-            )
-            if variant.is_archived and (
-                existing_link is None or item.quantity != existing_link.quantity
-            ):
-                unavailable_variants.append(
-                    f"Variant {item.item_variant_id}: 0 unit(s) available; "
-                    + "archived variants cannot be added or increased"
-                )
-                continue
-            available_quantity = checks[item.item_variant_id][1]
-            if available_quantity < item.quantity:
-                unavailable_variants.append(
-                    f"Variant {item.item_variant_id}: {available_quantity} unit(s) "
-                    f"available, requested {item.quantity}"
-                )
-
-        if unavailable_variants:
-            error_msg = "; ".join(unavailable_variants)
-            logger.warning(f"Validation failed: {error_msg}")
-            raise ConflictException(error_msg)
         return variants_by_id
+
+    @staticmethod
+    def _item_request_shortfall(
+        item: ItemVariantQuantity, variants_by_id: dict[UUID, ItemVariant]
+    ) -> Shortfall | None:
+        """Return why an order item refers to an invalid variant, or None."""
+        variant = variants_by_id.get(item.item_variant_id)
+        if variant is None:
+            return Shortfall(item.item_variant_id, "not_found", item.quantity)
+        if variant.item_id != item.item_id:
+            return Shortfall(
+                item.item_variant_id, "wrong_item", item.quantity, item_id=item.item_id
+            )
+        return None
 
     def create(self, order_in: OrderCreate) -> Order:
         """Create a new order"""
@@ -220,6 +196,7 @@ class OrderService:
             items=order_in.items,
             start_time=order_in.start_time,
             end_time=order_in.end_time,
+            context=NewBooking(),
         )
 
         # Zero deposit for trusted clients
@@ -244,8 +221,8 @@ class OrderService:
                 Payment(**payment.model_dump()) for payment in order_in.payments
             ]
 
-        self.session.add(order)
-        self.session.commit()
+        with transaction(self.session):
+            self.session.add(order)
         self.session.refresh(order)
         loaded_order = self.get_by_id(order.id) if order.id is not None else None
 
@@ -278,34 +255,34 @@ class OrderService:
             order, order_in, start_time, end_time, existing_links, variants_by_id
         )
 
-        # Update order fields
-        for field, value in update_data.items():
-            setattr(order, field, value)
+        with transaction(self.session):
+            # Update order fields
+            for field, value in update_data.items():
+                setattr(order, field, value)
 
-        # Zero deposit for trusted clients (enforced after field update)
-        client = self.session.get(Client, order.client_id)
-        if client and client.is_trusted:
-            order.deposit_amount = 0
+            # Zero deposit for trusted clients (enforced after field update)
+            client = self.session.get(Client, order.client_id)
+            if client and client.is_trusted:
+                order.deposit_amount = 0
 
-        # Update items if provided
-        if order_in.items is not None:
-            assert variants_by_id is not None
-            order.item_links = [
-                self._build_order_link(
-                    item,
-                    variants_by_id,
-                    existing_links.get(item.item_variant_id),
-                )
-                for item in order_in.items
-            ]
+            # Update items if provided
+            if order_in.items is not None:
+                assert variants_by_id is not None
+                order.item_links = [
+                    self._build_order_link(
+                        item,
+                        variants_by_id,
+                        existing_links.get(item.item_variant_id),
+                    )
+                    for item in order_in.items
+                ]
 
-        # Update payments if provided
-        if order_in.payments is not None:
-            order.payments = self._merge_payments(order.payments, order_in.payments)
+            # Update payments if provided
+            if order_in.payments is not None:
+                order.payments = self._merge_payments(order.payments, order_in.payments)
 
-        order.updated_at = datetime.now(UTC)
-        self.session.add(order)
-        self.session.commit()
+            order.updated_at = datetime.now(UTC)
+            self.session.add(order)
         self.session.refresh(order)
         loaded_order = self.get_by_id(order.id) if order.id is not None else None
 
@@ -316,11 +293,10 @@ class OrderService:
         """Archive an order (soft delete)"""
         logger.debug(f"Archiving order: {order.id}")
 
-        order.is_archived = True
-        order.updated_at = datetime.now(UTC)
-
-        self.session.add(order)
-        self.session.commit()
+        with transaction(self.session):
+            order.is_archived = True
+            order.updated_at = datetime.now(UTC)
+            self.session.add(order)
 
         logger.info(f"Order {order.id} archived successfully")
 
@@ -329,8 +305,8 @@ class OrderService:
 
         logger.debug(f"Deleting order: {order.id}")
 
-        self.session.delete(order)
-        self.session.commit()
+        with transaction(self.session):
+            self.session.delete(order)
 
         logger.info(f"Order {order.id} deleted successfully")
 
@@ -451,7 +427,7 @@ class OrderService:
         items = []
         for link in order.item_links:
             if link.item_variant is None:
-                raise BadRequestException("Order has an invalid item variant link")
+                raise InternalErrorException("Order has an invalid item variant link")
             items.append(
                 ItemVariantQuantity(
                     item_id=link.item_variant.item_id,
@@ -482,24 +458,21 @@ class OrderService:
             return
         if not items_to_validate:
             raise BadRequestException("Order must contain items")
-
-        # Closing an order (DONE/RETURNED/CANCELED) hands the item back rather
-        # than booking it out, so maintenance/availability no longer applies.
-        effective_status = (
-            order_in.status if order_in.status is not None else order.status
-        )
-        if effective_status in (
-            OrderStatus.DONE,
-            OrderStatus.RETURNED,
-            OrderStatus.CANCELED,
-        ):
-            return
+        assert order.id is not None
 
         self.validate_order_items(
             items=items_to_validate,
             start_time=start_time,
             end_time=end_time,
-            exclude_order_id=order.id,
-            existing_links=existing_links,
+            context=OrderEdit(
+                order_id=order.id,
+                existing_quantities={
+                    variant_id: link.quantity
+                    for variant_id, link in existing_links.items()
+                },
+                target_status=(
+                    order_in.status if order_in.status is not None else order.status
+                ),
+            ),
             variants_by_id=variants_by_id,
         )

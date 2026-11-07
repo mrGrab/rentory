@@ -8,7 +8,7 @@ from pdf2image import convert_from_bytes
 from PIL import Image
 from weasyprint import HTML
 
-from core.exceptions import BadRequestException
+from core.exceptions import InternalErrorException
 from core.logger import logger
 from models.order import DeliveryInfo, Order
 from models.payment import PaymentType
@@ -28,7 +28,7 @@ def generate_invoice_pdf(order: Order) -> bytes:
     items = []
     for link in order.item_links:
         if link.item_variant is None or link.item_variant.item is None:
-            raise BadRequestException("Order has an invalid item variant link")
+            raise InternalErrorException("Order has an invalid item variant link")
         items.append(
             {
                 "title": display_title(

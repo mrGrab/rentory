@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from api.errors import register_error_handlers
 from api.main import router as api_router
 from api.system import router as system_router
 from core.config import settings
@@ -70,6 +71,7 @@ def robots():
 
 
 # Include routers
+register_error_handlers(app)
 app.include_router(system_router)
 app.include_router(api_router)
 

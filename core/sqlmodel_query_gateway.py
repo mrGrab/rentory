@@ -1,3 +1,4 @@
+import builtins
 from collections.abc import Callable
 from typing import Any
 
@@ -30,7 +31,7 @@ class SQLModelQueryGateway[TModel, TFilters]:
         limit: int = 100,
         sort_field: str = "id",
         sort_order: str = "ASC",
-    ) -> tuple[list[TModel], int]:
+    ) -> tuple[builtins.list[TModel], int]:
         stmt = select(self.model)
         stmt = self.apply_filters(stmt, filters)
         stmt = apply_sorting(stmt, self.model, sort_field, sort_order)

@@ -11,14 +11,15 @@ from core.database import SessionDep
 from core.exceptions import BadRequestException, ConflictException
 from core.logger import logger
 from core.query_gateway import QueryGateway
+from core.transaction import transaction
 from models.item import Item, ItemCreate, ItemFilters, ItemUpdate
 from models.item_variant import (
     ItemVariant,
     ItemVariantCreate,
-    ItemVariantStatus,
     ItemVariantUpdate,
 )
-from services.helpers import ensure_utc, validate_time_period
+from services.booking_availability import BookingAvailability, NewBooking, OrderEdit
+from services.helpers import ensure_utc
 from services.item_query_gateway import ItemQueryGateway
 from services.item_variant_service import ItemVariantService
 
@@ -29,6 +30,7 @@ class ItemService:
     def __init__(self, session: SessionDep):
         self.session: Session = session
         self.variant_service = ItemVariantService(session)
+        self.booking_availability = BookingAvailability(session)
         self.query_gateway: QueryGateway[Item, ItemFilters] = ItemQueryGateway(session)
 
     def get_by_id(self, item_id: UUID) -> Item | None:
@@ -119,21 +121,20 @@ class ItemService:
 
         # Create item
         item_data = item_in.model_dump(exclude={"variants"})
-        item = Item(**item_data)
-        self.session.add(item)
-        self.session.flush()
-        if item.id is None:
-            raise BadRequestException("Item creation did not produce an ID")
+        with transaction(self.session):
+            item = Item(**item_data)
+            self.session.add(item)
+            self.session.flush()
+            if item.id is None:
+                raise BadRequestException("Item creation did not produce an ID")
 
-        # Create variants if provided
-        if item_in.variants:
-            for variant_in in item_in.variants:
-                variant_create = ItemVariantCreate(
-                    **variant_in.model_dump(), item_id=item.id
-                )
-                _ = self.variant_service.create(variant_create)
-
-        self.session.commit()
+            # Create variants if provided
+            if item_in.variants:
+                for variant_in in item_in.variants:
+                    variant_create = ItemVariantCreate(
+                        **variant_in.model_dump(), item_id=item.id
+                    )
+                    _ = self.variant_service.create(variant_create)
         self.session.refresh(item)
 
         logger.info(f"Item created successfully: {item.id}")
@@ -168,18 +169,14 @@ class ItemService:
 
         self._validate_title_uniqueness(item, update_data.get("title"))
 
-        try:
+        with transaction(self.session):
             for field, value in update_data.items():
                 setattr(item, field, value)
 
             if variants_were_supplied:
                 self._sync_variants(item, item_in)
-                item.updated_at = datetime.now(UTC)
-                self.session.commit()
-                self.session.refresh(item)
-        except Exception:
-            self.session.rollback()
-            raise
+            item.updated_at = datetime.now(UTC)
+        self.session.refresh(item)
 
         logger.info(f"Item updated successfully: {item.id}")
         return item
@@ -225,7 +222,7 @@ class ItemService:
                 self._create_or_reuse_variant(item, variant_in, reusable_variants)
             else:
                 _ = self.variant_service.update(
-                    existing_variants_map[variant_in.id], variant_in, commit=False
+                    existing_variants_map[variant_in.id], variant_in
                 )
 
     def _validate_supplied_variant_ids(
@@ -248,7 +245,7 @@ class ItemService:
         """Archive removed variants, returning them ordered for size/color reuse."""
         for variant_id in removed_variant_ids:
             logger.debug(f"Archiving variant {variant_id} (removed from item)")
-            self.variant_service.delete(existing_variants_map[variant_id], commit=False)
+            self.variant_service.delete(existing_variants_map[variant_id])
 
         # Removed variants are candidates for reuse
         # by comparing them with the most recent ones.
@@ -288,7 +285,6 @@ class ItemService:
             _ = self.variant_service.update(
                 reused_variant,
                 variant_in.model_copy(update={"is_archived": False}),
-                commit=False,
             )
             return
 
@@ -300,7 +296,7 @@ class ItemService:
             item_id=item_id,
             **variant_in.model_dump(exclude={"id"}, exclude_unset=True),
         )
-        _ = self.variant_service.create(variant_create, commit=False)
+        _ = self.variant_service.create(variant_create)
 
     def delete(self, item: Item) -> None:
         """
@@ -314,36 +310,19 @@ class ItemService:
         # Check for active orders
         for variant in item.variants:
             if variant.order_links:
-                item.is_archived = True
-                item.updated_at = datetime.now(UTC)
-
-                self.session.add(item)
-                self.session.commit()
+                with transaction(self.session):
+                    item.is_archived = True
+                    item.updated_at = datetime.now(UTC)
+                    self.session.add(item)
 
                 logger.info(f"Order {item.id} archived successfully")
                 return
 
         # Safe to delete
-        self.session.delete(item)
-        self.session.commit()
+        with transaction(self.session):
+            self.session.delete(item)
 
         logger.info(f"Item deleted successfully: {item.id}")
-
-    def check_availability(
-        self,
-        item: Item,
-        start_time: date,
-        end_time: date,
-        exclude_order_id: int | None = None,
-    ) -> tuple[Item, dict[UUID, int]]:
-        """Check item variant availability for a time period.
-
-        Returns (item, availability) where availability maps variant id to
-        available_quantity, since that value isn't a persisted model field.
-        """
-        return self.check_availability_many(
-            [item], start_time, end_time, exclude_order_id
-        )[0]
 
     def check_availability_many(
         self,
@@ -352,14 +331,20 @@ class ItemService:
         end_time: date,
         exclude_order_id: int | None = None,
     ) -> list[tuple[Item, dict[UUID, int]]]:
-        """Check multiple items against one set of overlapping bookings."""
-        validate_time_period(start_time, end_time)
+        """Check multiple items against one set of overlapping bookings.
 
-        checks = self.variant_service.check_availabilities(
+        Returns (item, availability) pairs. The item copy carries each
+        variant's status for the period; availability maps variant id to
+        available_quantity, since that value isn't a persisted model field.
+        """
+        context = (
+            OrderEdit(order_id=exclude_order_id) if exclude_order_id else NewBooking()
+        )
+        checks = self.booking_availability.availability(
             [variant for item in items for variant in item.variants],
             start_time,
             end_time,
-            exclude_order_id,
+            context,
         )
 
         results = []
@@ -370,27 +355,14 @@ class ItemService:
                 if variant.id is None:
                     variants.append(variant)
                     continue
-                is_available, available_quantity, reason = checks[variant.id]
-                availability[variant.id] = available_quantity
-
-                status = variant.status
-                if not is_available:
-                    logger.debug(reason)
-                    status = ItemVariantStatus.UNAVAILABLE
-                elif status in (
-                    ItemVariantStatus.CLEANING,
-                    ItemVariantStatus.REPAIR,
-                ) and not self.variant_service.service_window_overlaps(
-                    variant, start_time, end_time
-                ):
-                    status = ItemVariantStatus.AVAILABLE
-
+                check = checks[variant.id]
+                availability[variant.id] = check.available_quantity
                 # Availability status belongs to this response, not the stored
                 # inventory record. Include relationships needed by serialization.
                 variants.append(
                     variant.model_copy(
                         update={
-                            "status": status,
+                            "status": check.status,
                             "prices": variant.prices,
                             "order_links": variant.order_links,
                         }

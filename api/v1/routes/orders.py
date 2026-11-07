@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 
 from core.database import SessionDep
 from core.dependencies import CurrentSuperuser, CurrentUser
-from core.exceptions import NotFoundException
+from core.exceptions import InternalErrorException, NotFoundException
 from core.logger import logger
 from core.query_utils import calculate_pagination, parse_params, set_pagination_headers
 from models.order import (
@@ -51,7 +51,7 @@ def to_public(order: Order) -> OrderPublic:
     for link in order.item_links:
         variant = link.item_variant
         if variant is None or variant.item is None:
-            raise NotFoundException("Order has an invalid item variant link")
+            raise InternalErrorException("Order has an invalid item variant link")
         item_info = OrderItemPublicInfo(
             item_id=variant.item_id,
             item_variant_id=link.item_variant_id,

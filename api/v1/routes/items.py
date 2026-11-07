@@ -225,8 +225,8 @@ def check_availability(
     with service.session.no_autoflush:
         availability = None
         if start_time and end_time:
-            item, availability = service.check_availability(
-                item, start_time, end_time, exclude_order_id
+            [(item, availability)] = service.check_availability_many(
+                [item], start_time, end_time, exclude_order_id
             )
         result = to_public(item, availability)
 

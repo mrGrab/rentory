@@ -1,12 +1,11 @@
-from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import inspect
-from sqlmodel import Session, col, select
+from sqlmodel import Session, select
 
-from core.exceptions import BadRequestException
+from core.exceptions import BadRequestException, ConflictException
 from core.logger import logger
 from core.query_gateway import QueryGateway
+from core.transaction import transaction
 from models.item_variant import (
     ItemVariant,
     ItemVariantCreate,
@@ -16,8 +15,7 @@ from models.item_variant import (
     ItemVariantStatus,
     ItemVariantUpdate,
 )
-from models.links import OrderItemLink
-from models.order import Order, OrderStatus
+from services.booking_availability import BookingAvailability
 from services.item_variant_query_gateway import ItemVariantQueryGateway
 
 
@@ -29,25 +27,7 @@ class ItemVariantService:
         self.query_gateway: QueryGateway[ItemVariant, ItemVariantFilters] = (
             ItemVariantQueryGateway(session)
         )
-
-    @staticmethod
-    def service_window_overlaps(
-        variant: ItemVariant, start_time: date, end_time: date
-    ) -> bool:
-        """Whether the period touches the variant's service window.
-
-        Both ends are inclusive (a same-day handover is a conflict). A missing
-        service start or end date leaves that side of the window open.
-        """
-        start_date = (
-            start_time.date() if isinstance(start_time, datetime) else start_time
-        )
-        end_date = end_time.date() if isinstance(end_time, datetime) else end_time
-        return (
-            variant.service_start_time is None or variant.service_start_time <= end_date
-        ) and (
-            variant.service_end_time is None or variant.service_end_time >= start_date
-        )
+        self.booking_availability = BookingAvailability(session)
 
     @staticmethod
     def _validate_maintenance(
@@ -85,9 +65,7 @@ class ItemVariantService:
         logger.debug(f"Found {len(variants)} variants out of {total} total")
         return variants, total
 
-    def create(
-        self, variant_in: ItemVariantCreate, *, commit: bool = True
-    ) -> ItemVariant:
+    def create(self, variant_in: ItemVariantCreate) -> ItemVariant:
         """Create a new item variant"""
         logger.debug(f"Creating new variant for item {variant_in.item_id}")
 
@@ -132,17 +110,17 @@ class ItemVariantService:
             for p in variant_in.prices
         ]
 
-        self.session.add(variant)
-        if commit:
-            self.session.commit()
-            self.session.refresh(variant)
-        else:
+        # Flush so a caller's later identity checks in the same transaction
+        # see this row.
+        with transaction(self.session):
+            self.session.add(variant)
             self.session.flush()
+        self.session.refresh(variant)
 
         logger.info(f"Item variant created successfully: {variant.id}")
         return variant
 
-    def delete(self, variant: ItemVariant, *, commit: bool = True) -> None:
+    def delete(self, variant: ItemVariant) -> None:
         """Delete variant or archive if it has orders"""
         logger.debug(f"Attempting to delete variant: {variant.id}")
 
@@ -151,21 +129,17 @@ class ItemVariantService:
                 f"Variant {variant.id} has linked orders. Archiving instead of deleting"
             )
 
-            variant.is_archived = True
-            variant.active_identity_key = None
-            self.session.add(variant)
-            if commit:
-                self.session.commit()
-            else:
+            with transaction(self.session):
+                variant.is_archived = True
+                variant.active_identity_key = None
+                self.session.add(variant)
                 self.session.flush()
             logger.info(f"Variant {variant.id} archived successfully")
             return
 
         # No orders - safe to delete
-        self.session.delete(variant)
-        if commit:
-            self.session.commit()
-        else:
+        with transaction(self.session):
+            self.session.delete(variant)
             self.session.flush()
         logger.info(f"Variant {variant.id} deleted successfully")
 
@@ -173,8 +147,6 @@ class ItemVariantService:
         self,
         variant: ItemVariant,
         variant_in: ItemVariantUpdate,
-        *,
-        commit: bool = True,
     ) -> ItemVariant:
         """Update existing item variant and its prices"""
         logger.debug(f"Updating variant: {variant.id}")
@@ -202,7 +174,7 @@ class ItemVariantService:
         self._validate_maintenance(
             new_status, new_quantity, new_quantity_in_maintenance
         )
-        if new_quantity < self._maximum_reserved_quantity(variant.id):
+        if new_quantity < self.booking_availability.reserved_quantity(variant.id):
             raise BadRequestException(
                 "quantity cannot be lower than the maximum concurrently reserved quantity"
             )
@@ -239,12 +211,10 @@ class ItemVariantService:
             variant.service_end_time = None
             variant.quantity_in_maintenance = 0
 
-        self.session.add(variant)
-        if commit:
-            self.session.commit()
-            self.session.refresh(variant)
-        else:
+        with transaction(self.session):
+            self.session.add(variant)
             self.session.flush()
+        self.session.refresh(variant)
 
         logger.info(f"Variant updated successfully: {variant.id}")
         return variant
@@ -278,7 +248,7 @@ class ItemVariantService:
         if exclude_variant_id is not None:
             stmt = stmt.where(ItemVariant.id != exclude_variant_id)
         if self.session.exec(stmt).first() is not None:
-            raise BadRequestException(
+            raise ConflictException(
                 "An active variant with this size and color already exists for the item"
             )
 
@@ -320,37 +290,6 @@ class ItemVariantService:
                     )
                 )
         variant.prices = updated_prices
-
-    def _maximum_reserved_quantity(self, variant_id: UUID) -> int:
-        active_statuses = {
-            OrderStatus.BOOKED,
-            OrderStatus.BOOKED_NOT_PAID,
-            OrderStatus.ISSUED,
-        }
-        stmt = (
-            select(Order)
-            .join(OrderItemLink)
-            .where(
-                OrderItemLink.item_variant_id == variant_id,
-                Order.is_archived == False,
-            )
-        )
-        events: dict[date, int] = {}
-        for order in self.session.exec(stmt).all():
-            if order.status not in active_statuses:
-                continue
-            link = next(
-                link for link in order.item_links if link.item_variant_id == variant_id
-            )
-            events[order.start_time] = events.get(order.start_time, 0) + link.quantity
-            end_after = date.fromordinal(order.end_time.toordinal() + 1)
-            events[end_after] = events.get(end_after, 0) - link.quantity
-
-        reserved = maximum = 0
-        for event_date in sorted(events):
-            reserved += events[event_date]
-            maximum = max(maximum, reserved)
-        return maximum
 
     def get_by_item_id(self, item_id: UUID) -> list[ItemVariant]:
         """
@@ -404,112 +343,3 @@ class ItemVariantService:
 
         logger.debug(f"Found {len(variants)} variants with status {status}")
         return list(variants)
-
-    def check_availability(
-        self,
-        variant: ItemVariant,
-        start_time: date,
-        end_time: date,
-        exclude_order_id: int | None = None,
-    ) -> tuple[bool, int, str | None]:
-        """Validate item variant availability for the given time period.
-
-        Returns (is_available, available_quantity, reason).
-        """
-        variant_id = variant.id
-        if variant_id is None:
-            raise BadRequestException("Variant must have an ID to check availability")
-
-        return self.check_availabilities(
-            [variant], start_time, end_time, exclude_order_id
-        )[variant_id]
-
-    def check_availabilities(
-        self,
-        variants: list[ItemVariant],
-        start_time: date,
-        end_time: date,
-        exclude_order_id: int | None = None,
-    ) -> dict[UUID, tuple[bool, int, str | None]]:
-        """Calculate availability for variants with one booking query."""
-        if not variants:
-            return {}
-
-        variant_ids = [
-            variant.id
-            for variant in variants
-            if variant.id is not None
-            and (not variant.is_archived or exclude_order_id is not None)
-        ]
-        events_by_variant: dict[UUID, dict[date, int]] = {
-            variant_id: {} for variant_id in variant_ids
-        }
-
-        # Read booking quantities directly from the joined links. Loading full
-        # Order objects would also lazy-load each order's item_links.
-        stmt = select(
-            col(OrderItemLink.item_variant_id),
-            col(Order.start_time),
-            col(Order.end_time),
-            col(OrderItemLink.quantity),
-        ).join(Order, col(Order.id) == col(OrderItemLink.order_id))
-        stmt = stmt.where(
-            col(OrderItemLink.item_variant_id).in_(variant_ids),
-            inspect(Order)
-            .columns["status"]
-            .in_(
-                [
-                    OrderStatus.BOOKED,
-                    OrderStatus.BOOKED_NOT_PAID,
-                    OrderStatus.ISSUED,
-                ]
-            ),
-            Order.is_archived == False,
-            Order.start_time <= end_time,
-            Order.end_time >= start_time,
-        )
-        if exclude_order_id:
-            stmt = stmt.where(Order.id != exclude_order_id)
-
-        if variant_ids:
-            for variant_id, order_start, order_end, quantity in self.session.exec(stmt):
-                events = events_by_variant[variant_id]
-                events[order_start] = events.get(order_start, 0) + quantity
-                end_after = date.fromordinal(order_end.toordinal() + 1)
-                events[end_after] = events.get(end_after, 0) - quantity
-
-        results = {}
-        for variant in variants:
-            if variant.id is None:
-                continue
-            if variant.is_archived and exclude_order_id is None:
-                results[variant.id] = (False, 0, f"Variant {variant.id} is archived")
-                continue
-
-            effective_quantity = variant.quantity
-            if (
-                variant.status != ItemVariantStatus.CLEANING
-                and self.service_window_overlaps(variant, start_time, end_time)
-            ):
-                effective_quantity -= variant.quantity_in_maintenance
-
-            booked_quantity = concurrent = 0
-            for event_date, change in sorted(events_by_variant[variant.id].items()):
-                concurrent += change
-                booked_quantity = max(booked_quantity, concurrent)
-
-            available_quantity = effective_quantity - booked_quantity
-            if available_quantity <= 0:
-                results[variant.id] = (
-                    False,
-                    max(available_quantity, 0),
-                    (
-                        f"Variant {variant.id} is fully booked or under maintenance during "
-                        f"this period ({booked_quantity} booked, "
-                        f"{variant.quantity_in_maintenance} in maintenance, "
-                        f"{variant.quantity} total)"
-                    ),
-                )
-            else:
-                results[variant.id] = (True, available_quantity, None)
-        return results

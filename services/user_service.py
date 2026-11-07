@@ -10,6 +10,7 @@ from core.database import (
 from core.exceptions import ConflictException
 from core.logger import logger
 from core.query_gateway import QueryGateway
+from core.transaction import transaction
 from models.user import User, UserCreate, UserFilters, UserUpdate
 from services.user_query_gateway import UserQueryGateway
 
@@ -91,11 +92,10 @@ class UserService:
                     f"Email '{update_data['email']}' already exists"
                 )
 
-        for field, value in update_data.items():
-            setattr(user, field, value)
-
-        self.session.add(user)
-        self.session.commit()
+        with transaction(self.session):
+            for field, value in update_data.items():
+                setattr(user, field, value)
+            self.session.add(user)
         self.session.refresh(user)
         logger.info(f"Successfully updated user: {user.username}")
         return user
@@ -103,6 +103,6 @@ class UserService:
     def delete(self, user: User) -> None:
         """Permanently delete a user"""
         logger.debug(f"Deleting user: {user.id}")
-        self.session.delete(user)
-        self.session.commit()
+        with transaction(self.session):
+            self.session.delete(user)
         logger.info(f"Successfully deleted user: {user.id}")

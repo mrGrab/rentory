@@ -9,6 +9,7 @@ from core.exceptions import BadRequestException, ConflictException
 # --- Project Imports ---
 from core.logger import logger
 from core.query_gateway import QueryGateway
+from core.transaction import transaction
 from models.client import Client, ClientCreate, ClientFilters, ClientUpdate
 from models.order import Order
 from services.client_query_gateway import ClientQueryGateway
@@ -57,8 +58,8 @@ class ClientService:
             raise ConflictException("Client with such phone already exists")
 
         client = Client(**client_in.model_dump(exclude_unset=True))
-        self.session.add(client)
-        self.session.commit()
+        with transaction(self.session):
+            self.session.add(client)
         self.session.refresh(client)
 
         logger.info(f"Client created successfully: {client.id}")
@@ -87,12 +88,11 @@ class ClientService:
                     f"Phone number {update_data['phone']} is already in use"
                 )
 
-        for field, value in update_data.items():
-            setattr(client, field, value)
-
-        client.updated_at = datetime.now(UTC)
-        self.session.add(client)
-        self.session.commit()
+        with transaction(self.session):
+            for field, value in update_data.items():
+                setattr(client, field, value)
+            client.updated_at = datetime.now(UTC)
+            self.session.add(client)
         self.session.refresh(client)
 
         logger.info(f"Client updated successfully: {client.id}")
@@ -106,8 +106,8 @@ class ClientService:
             logger.warning(f"Cannot delete client {client.id}: has orders")
             raise BadRequestException("Cannot delete client: has active orders")
 
-        self.session.delete(client)
-        self.session.commit()
+        with transaction(self.session):
+            self.session.delete(client)
         logger.info(f"Client deleted successfully: {client.id}")
 
     def has_orders(self, client_id: UUID) -> bool:

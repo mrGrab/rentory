@@ -1,3 +1,4 @@
+import builtins
 from typing import Any, Protocol
 
 
@@ -13,4 +14,4 @@ class QueryGateway[TModel, TFilters](Protocol):
         limit: int = 100,
         sort_field: str = "id",
         sort_order: str = "ASC",
-    ) -> tuple[list[TModel], int]: ...
+    ) -> tuple[builtins.list[TModel], int]: ...
