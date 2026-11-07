@@ -22,6 +22,8 @@ dependencies = [
     "pydantic[email]>=2.14.3",
     "pyjwt>=2.15.1",
     "python-multipart>=0.0.33",
+    # Pinned: 2.1.x passes raw UUIDs to mysql-connector on MariaDB (see docs/dependency-pins.md)
+    "sqlalchemy>=2.0.52,<2.1",
     "sqlmodel>=0.0.48",
     "uvicorn>=0.54.0",
     "weasyprint>=70.0",
